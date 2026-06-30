@@ -1,34 +1,50 @@
 # treasury-intent-controller
 
-The **authorization plane** of the ATLAS Treasury intent-gated action loop: a
-deterministic Go gate that authorizes an irreversible treasury action (payment as
-class 1) only when every declared criterion passes. It reads no artifacts — criteria,
-thresholds, and the idempotency key arrive as params. Scoring is fail-closed
-(`Unevaluable` never collapses to pass), volatile criteria are re-verified at the
-dispatch edge, and `ACHIEVED` is a single append-only event emitted by this gate
-alone; the adapter records a settlement event only after observing it. The whole run
-is reconstructable from a logical-clock event log and replays byte-identically.
+The **authorization plane** of the ATLAS Treasury intent-gated action loop. A
+deterministic Go gate decides whether an irreversible treasury action — a payment
+(class 1) — is authorized. It holds the sole authority to emit `ACHIEVED`; only then
+does an adapter record a settlement event. Nothing moves until the gate says so.
+
+The gate reads no artifacts — criteria, thresholds, and the idempotency key arrive as
+params. Scoring is fail-closed: any `Fail` or `Unevaluable` denies authorization, and
+`Unevaluable` never collapses into a pass. Volatile facts (balance, reachability) are
+re-checked at the dispatch edge by the same authority, immediately before authorizing.
+Every run is reconstructable from a logical-clock event log and replays byte-identically.
+
+### The distinctive feature — exactly-once *by construction*
+
+What makes two payments "the same payment" is a **declared idempotency key, treated as
+a first-class gate criterion** — not adapter-local dedup logic. The key is **required**
+(an absent key is unevaluable and fails closed) and is **reserved at the dispatch edge**.
+A near-duplicate — same key, one changed field, hence a *different* intent hash —
+**collides on the key and is refused** (`FAILED_AT_DISPATCH`). So at-most-once holds on
+the settlement log by construction, not by assertion. The amber nodes below are the two
+idempotency checkpoints; the key's governance as a signed, expert-attested criterion
+lives in the ATLAS `IntentSpec` artifact (a pending slice) — this gate consumes and
+enforces it.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> DECLARED
-    DECLARED --> RESOLVING
-    RESOLVING --> ACTIVE
-    RESOLVING --> FAILED
-    ACTIVE --> VERIFYING
-    ACTIVE --> FAILED
-    VERIFYING --> ACHIEVED: all criteria pass incl. volatile re-check<br/>+ idempotency reserved → settle
-    VERIFYING --> FAILED: a criterion failed / unevaluable
-    VERIFYING --> FAILED_AT_DISPATCH: volatile re-check failed<br/>OR idempotency collision (no value moved)
-    ACHIEVED --> [*]
-    FAILED --> [*]
-    FAILED_AT_DISPATCH --> [*]
+flowchart TD
+    D[DECLARED] -->|key required| K{idempotency<br/>key present?}
+    K -->|no — absent key| F[FAILED]
+    K -->|yes| R[RESOLVING] --> A[ACTIVE] --> V[VERIFYING]
+    V -->|criterion failed / unevaluable| F
+    V -->|all criteria pass| VR{volatile<br/>re-check}
+    VR -->|fact drifted| FD[FAILED_AT_DISPATCH]
+    VR -->|holds| IDEM{{"reserve idempotency key<br/>declared · first-class criterion"}}
+    IDEM -->|collision — duplicate payment| FD
+    IDEM -->|fresh key| ACH[ACHIEVED — settle exactly once]
+
+    classDef idem fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
+    classDef good fill:#86efac,stroke:#15803d,stroke-width:2px,color:#111827;
+    classDef bad fill:#fca5a5,stroke:#b91c1c,stroke-width:2px,color:#111827;
+    class K,IDEM idem;
+    class ACH good;
+    class F,FD bad;
 ```
 
-`FAILED_AT_DISPATCH` is reachable **only** from `VERIFYING` via the dispatch edge,
-and it guarantees no settlement event exists — the audit reading is unambiguous:
-`FAILED_AT_DISPATCH ⟹ no value moved`. (An absent idempotency key short-circuits to
-a `FAILED` result at declaration — a terminal outcome, not a graph edge.)
+Both `FAILED` and `FAILED_AT_DISPATCH` guarantee **no settlement event exists** — the
+audit reading is unambiguous: a duplicate or drifted intent ⟹ **no value moved**.
 
 ## Invariants (enforced by construction, pinned by tests)
 
