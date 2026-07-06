@@ -1,18 +1,27 @@
-// Command server exposes the authorization gate over HTTP for the integration
-// live-probe. It is a thin shell: the gate (internal/gate) is the substance.
+// Command server exposes the authorization gate over HTTP. It is a thin shell:
+// the gate (internal/gate) is the substance.
 //
-// Endpoints:
+// Endpoints (CONTRACT-V2 §V2.5):
 //
-//	GET  /healthz    -> 200 "ok"
-//	POST /v2/intents -> decode an intent + IntentSpecParams, run gate.Authorize
-//	                    with a fresh ReferenceAdapter and Store, and respond JSON
-//	                    {terminal, reason, trajectory_hash, settlement?}.
+//	GET  /healthz                 -> 200 "ok"
+//	POST /v2/intents              -> decode an intent + IntentSpecParams, run
+//	                                 gate.Authorize over the boot-time shared
+//	                                 stores; respond JSON
+//	                                 {terminal, reason, trajectory_hash, achieved_seq?}.
+//	GET  /v2/events               -> cursor read over the durable feed
+//	                                 (?since=<globalSeq>&type=<optional>).
+//	GET  /v2/intents/{id}/events  -> per-intent records in ascending intent_seq.
+//
+// Boot wires the durable feed and the durable idempotency store ONCE (dir from
+// TIC_DATA_DIR, default "./data"); handlers share them. The per-request Gate is
+// a thin wrapper over those shared singletons.
 //
 // The probe drives a deterministic terminal WITHOUT a live Python scorer by
 // passing an optional "force_scores" map (criterion -> {declaration, dispatch}
 // results). That map backs a small inline Scorer (forceScorer) which defaults a
 // missing criterion/result to Pass. This is a documented test affordance; the
 // real /ml/evaluate HTTPScorer is a later slice.
+//
 package main
 
 import (
@@ -22,9 +31,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
-	"github.com/pazooki/treasury-intent-controller/internal/adapter"
+	"github.com/pazooki/treasury-intent-controller/internal/durable"
 	"github.com/pazooki/treasury-intent-controller/internal/gate"
 	"github.com/pazooki/treasury-intent-controller/internal/idempotency"
 	"github.com/pazooki/treasury-intent-controller/internal/intent"
@@ -61,17 +71,25 @@ type intentRequest struct {
 	ForceScores      map[string]forceScore `json:"force_scores"`
 }
 
-type settlementDTO struct {
-	IntentID string `json:"intent_id"`
-	Key      string `json:"key"`
-	Payload  string `json:"payload"`
+// intentResponse is the V2 response shape: settlement is removed (the gate no
+// longer settles); achieved_seq is >=1 iff the terminal is ACHIEVED.
+type intentResponse struct {
+	Terminal       string `json:"terminal"`
+	Reason         string `json:"reason"`
+	TrajectoryHash string `json:"trajectory_hash"`
+	AchievedSeq    int    `json:"achieved_seq,omitempty"` // >=1 iff ACHIEVED
 }
 
-type intentResponse struct {
-	Terminal       string         `json:"terminal"`
-	Reason         string         `json:"reason"`
-	TrajectoryHash string         `json:"trajectory_hash"`
-	Settlement     *settlementDTO `json:"settlement,omitempty"`
+// eventsResponse wraps the raw durable.Record objects (their §V2.1 JSON tags ARE
+// the wire contract; no re-tagging DTO).
+type eventsResponse struct {
+	Events    []durable.Record `json:"events"`
+	NextSince int              `json:"next_since"` // max GlobalSeq returned, or the input since
+}
+
+type intentEventsResponse struct {
+	IntentID string           `json:"intent_id"`
+	Events   []durable.Record `json:"events"`
 }
 
 // --- inline scorer driven by force_scores ---
@@ -114,7 +132,7 @@ func (f forceScorer) Score(_ context.Context, _ intent.Intent, c intent.Criterio
 	return scoring.Pass
 }
 
-// --- handlers ---
+// --- handlers (closing over the boot-time shared stores) ---
 
 func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -122,74 +140,118 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	_, _ = io.WriteString(w, "ok")
 }
 
-func handleIntents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req intentRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	i := intent.Intent{
-		EpisodeSeed:      req.EpisodeSeed,
-		IdempotencyKey:   intent.IdempotencyKey(req.IdempotencyKey),
-		RuleArtifactHash: req.RuleArtifactHash,
-		IntentSpecHash:   req.IntentSpecHash,
-		Spec: intent.IntentSpecParams{
-			ActionClass:      req.Spec.ActionClass,
-			IdempotencyScope: req.Spec.IdempotencyScope,
-		},
-	}
-	for _, c := range req.Spec.Criteria {
-		i.Spec.Criteria = append(i.Spec.Criteria, intent.Criterion{
-			Name:       c.Name,
-			Threshold:  c.Threshold,
-			Volatility: intent.Volatility(c.Volatility),
-		})
-	}
-
-	// Fresh adapter + store per request: each authorization is self-contained and
-	// deterministic from the intent + seed.
-	scorer := forceScorer{scores: req.ForceScores}
-	g := gate.New(scorer, adapter.NewReferenceAdapter(), idempotency.NewStore())
-	res := g.Authorize(r.Context(), i)
-
-	resp := intentResponse{
-		Terminal:       string(res.Terminal),
-		Reason:         res.Reason,
-		TrajectoryHash: res.TrajectoryHash,
-	}
-	if res.Settlement != nil {
-		resp.Settlement = &settlementDTO{
-			IntentID: res.Settlement.IntentID,
-			Key:      string(res.Settlement.Key),
-			Payload:  res.Settlement.Payload,
+func handleIntents(feed *durable.Store, istore *idempotency.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req intentRequest
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil {
+			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+			return
 		}
-	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+		i := intent.Intent{
+			EpisodeSeed:      req.EpisodeSeed,
+			IdempotencyKey:   intent.IdempotencyKey(req.IdempotencyKey),
+			RuleArtifactHash: req.RuleArtifactHash,
+			IntentSpecHash:   req.IntentSpecHash,
+			Spec: intent.IntentSpecParams{
+				ActionClass:      req.Spec.ActionClass,
+				IdempotencyScope: req.Spec.IdempotencyScope,
+			},
+		}
+		for _, c := range req.Spec.Criteria {
+			i.Spec.Criteria = append(i.Spec.Criteria, intent.Criterion{
+				Name:       c.Name,
+				Threshold:  c.Threshold,
+				Volatility: intent.Volatility(c.Volatility),
+			})
+		}
+
+		// Per-request gate over the SHARED boot-time stores (the slice-1
+		// per-request fresh store is gone by contract).
+		scorer := forceScorer{scores: req.ForceScores}
+		g := gate.New(scorer, feed, istore)
+		res, err := g.Authorize(r.Context(), i)
+		if err != nil {
+			http.Error(w, "authorize: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		resp := intentResponse{
+			Terminal:       string(res.Terminal),
+			Reason:         res.Reason,
+			TrajectoryHash: res.TrajectoryHash,
+			AchievedSeq:    res.AchievedSeq,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}
 }
 
-// newMux wires the routes. Split out so tests can drive it via httptest without
-// binding a port.
-func newMux() *http.ServeMux {
+func handleEvents(feed *durable.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		since := 0
+		if raw := r.URL.Query().Get("since"); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil {
+				http.Error(w, "bad since: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			since = n
+		}
+		typ := r.URL.Query().Get("type")
+
+		records := feed.Since(since, typ)
+		next := since
+		if len(records) > 0 {
+			next = records[len(records)-1].GlobalSeq
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(eventsResponse{Events: records, NextSince: next})
+	}
+}
+
+func handleIntentEvents(feed *durable.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(intentEventsResponse{
+			IntentID: id,
+			Events:   feed.ByIntent(id),
+		})
+	}
+}
+
+// newMux wires the routes over the boot-time shared stores. Split out so tests
+// can drive it via httptest without binding a port.
+func newMux(feed *durable.Store, istore *idempotency.Store) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", handleHealthz)
-	mux.HandleFunc("/v2/intents", handleIntents)
+	mux.HandleFunc("GET /healthz", handleHealthz)
+	mux.HandleFunc("POST /v2/intents", handleIntents(feed, istore))
+	mux.HandleFunc("GET /v2/events", handleEvents(feed))
+	mux.HandleFunc("GET /v2/intents/{id}/events", handleIntentEvents(feed))
 	return mux
 }
 
 func main() {
+	dir := os.Getenv("TIC_DATA_DIR")
+	if dir == "" {
+		dir = "./data"
+	}
+	feed, err := durable.Open(dir)
+	if err != nil {
+		log.Fatalf("open durable feed: %v", err)
+	}
+	istore, err := idempotency.OpenStore(dir)
+	if err != nil {
+		log.Fatalf("open idempotency store: %v", err)
+	}
+
 	addr := ":8080"
 	if v := os.Getenv("TIC_ADDR"); v != "" {
 		addr = v
 	}
-	log.Printf("treasury-intent-controller listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, newMux()))
+	log.Printf("treasury-intent-controller listening on %s (data dir %s)", addr, dir)
+	log.Fatal(http.ListenAndServe(addr, newMux(feed, istore)))
 }
