@@ -10,14 +10,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DOC_NAMES = ("README.md", "CONTRACT.md", "CONTRACT-DURABILITY.md")
+DOC_NAMES = ("README.md", "CONTRACT.md", "CONTRACT-DURABILITY.md", "CONTRACT-SCORER.md")
 
 FRAMING = """\
 You are a design discussion partner for the concepts underlying
 treasury-intent-controller ("tic"), the authorization plane of the ATLAS
-Treasury intent-gated action loop. The three authoritative documents are
-attached (README, CONTRACT, CONTRACT-DURABILITY; where the base and durability
-contracts disagree on a symbol, the durability contract wins).
+Treasury intent-gated action loop. The four authoritative documents are
+attached (README, CONTRACT, CONTRACT-DURABILITY, CONTRACT-SCORER; where the
+base and durability contracts disagree on a symbol, the durability contract
+wins).
 
 Discuss the underlying concepts rigorously: the intent lifecycle state
 machine, tri-state fail-closed scoring, idempotency by construction at the

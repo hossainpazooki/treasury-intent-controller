@@ -35,7 +35,7 @@ def test_document_blocks_shape():
     cached = [b for b in blocks if "cache_control" in b]
     assert cached == [blocks[-1]]
     assert blocks[-1]["cache_control"] == {"type": "ephemeral"}
-    assert blocks[-1]["title"] == "CONTRACT-DURABILITY.md"
+    assert blocks[-1]["title"] == "CONTRACT-SCORER.md"
 
 
 def test_inject_documents_prepends_and_preserves():
@@ -49,7 +49,7 @@ def test_inject_documents_prepends_and_preserves():
     assert isinstance(content, list)
     assert len(content) == len(context.DOC_NAMES) + 1
     assert all(b["type"] == "document" for b in content[:-1])
-    assert content[-2]["title"] == "CONTRACT-DURABILITY.md"  # last doc, then the question
+    assert content[-2]["title"] == "CONTRACT-SCORER.md"  # last doc, then the question
     assert content[-1] == {"type": "text", "text": "hi"}
 
 
