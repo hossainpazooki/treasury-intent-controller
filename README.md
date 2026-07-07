@@ -37,11 +37,13 @@ flowchart TD
     VR -->|fact drifted| FD[FAILED_AT_DISPATCH]
     VR -->|holds| IDEM{{"reserve idempotency key<br/>declared · first-class criterion"}}
     IDEM -->|collision — duplicate payment| FD
-    IDEM -->|fresh key| ACH[ACHIEVED — one durable record<br/>consumers settle from it]
+    IDEM -->|fresh key| ACH["ACHIEVED — one durable record<br/>consumers settle from it"]
 
+    classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
     classDef idem fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
     classDef good fill:#86efac,stroke:#15803d,stroke-width:2px,color:#111827;
     classDef bad fill:#fca5a5,stroke:#b91c1c,stroke-width:2px,color:#111827;
+    class D,R,A,V,VR neutral;
     class K,IDEM idem;
     class ACH good;
     class F,FD bad;
@@ -67,6 +69,40 @@ duplicate or drifted intent ⟹ **no value moved**.
 6. **Durability**: the event feed and the idempotency reservations survive process
    restart over the same `TIC_DATA_DIR` (kill/restart proven — byte-identical
    events, same-key re-dispatch still refused).
+
+## Emit-and-observe
+
+The gate's job ends at the durable `ACHIEVED` record. Settlement belongs to a
+consumer that **pulls** the feed by cursor and recomputes — the gate never calls
+out, and a crash on either side loses nothing:
+
+```mermaid
+flowchart LR
+    subgraph TIC["authorization plane — this repo"]
+        G["gate<br/>sole ACHIEVED authority"] -->|"mirrors every event,<br/>stops at ACHIEVED"| FEED[("events.jsonl<br/>append-only · fsync per append<br/>global cursor seq")]
+        FEED --> API["cmd/server<br/>GET /v2/events?since=cursor"]
+        FEED -.- NOTE["kill/restart over the same TIC_DATA_DIR:<br/>records + reservations recover from disk,<br/>seq continues gapless at prevMax+1"]
+    end
+    subgraph EXT["decision/execution plane — separate slice (COMPASS)"]
+        C["settlement consumer<br/>cron · pull/reconcile"] -->|recompute, never re-read| LED[("keyed settlement ledger<br/>at-most-once")]
+    end
+    API -.->|"polled by cursor — the consumer initiates;<br/>the gate never calls out"| C
+
+    classDef neutral fill:#e5e7eb,stroke:#6b7280,stroke-width:1.5px,color:#111827;
+    classDef durable fill:#93c5fd,stroke:#1d4ed8,stroke-width:2px,color:#111827;
+    classDef idem fill:#f59e0b,stroke:#b45309,stroke-width:3px,color:#111827;
+    classDef note fill:#f3f4f6,stroke:#9ca3af,stroke-width:1.5px,stroke-dasharray:4 4,color:#111827;
+    class G,API,C neutral;
+    class FEED durable;
+    class LED idem;
+    class NOTE note;
+    style TIC fill:#f8fafc,stroke:#94a3b8,color:#111827;
+    style EXT fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:6 4,color:#111827;
+```
+
+The amber ledger is the consumer-side twin of the amber checkpoints above: the
+same declared key that gates dispatch keys the settlement ledger, so at-most-once
+holds end to end.
 
 ## Layout
 
