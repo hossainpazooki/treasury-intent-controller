@@ -69,7 +69,7 @@ func TestDistinctKeysAllReserve(t *testing.T) {
 	}
 }
 
-// --- CONTRACT-V2 §V2.2 durable-store tests (OpenStore) ---
+// --- CONTRACT-DURABILITY §V2.2 durable-store tests (OpenStore) ---
 
 // storeFile returns the durable store's on-disk path for dir.
 func storeFile(dir string) string {

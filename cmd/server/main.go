@@ -1,7 +1,7 @@
 // Command server exposes the authorization gate over HTTP. It is a thin shell:
 // the gate (internal/gate) is the substance.
 //
-// Endpoints (CONTRACT-V2 §V2.5):
+// Endpoints (CONTRACT-DURABILITY §V2.5):
 //
 //	GET  /healthz                 -> 200 "ok"
 //	POST /v2/intents              -> decode an intent + IntentSpecParams, run

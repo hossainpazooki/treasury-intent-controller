@@ -20,7 +20,7 @@ stdlib-only Go) in a sibling directory. Only this design doc lives here.
 |---|---|
 | Interface | Local web chat UI (single page, localhost) |
 | Model | `claude-opus-4-8`, streaming, adaptive thinking with `display: "summarized"` |
-| Context | `README.md`, `CONTRACT.md`, `CONTRACT-V2.md` baked into a prompt-cached system prompt |
+| Context | `README.md`, `CONTRACT.md`, `CONTRACT-DURABILITY.md` baked into a prompt-cached system prompt |
 | Persistence | Session-only; export button downloads a markdown transcript |
 | Stack / location | Python + FastAPI in `C:\Users\hossa\dev\tic-concept-chat\` |
 

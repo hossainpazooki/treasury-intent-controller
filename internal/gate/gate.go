@@ -2,7 +2,7 @@
 //
 // The gate is the sole emitter of the ACHIEVED event and the single orchestrator
 // of the DECLARED -> RESOLVING -> ACTIVE -> VERIFYING -> {ACHIEVED | FAILED |
-// FAILED_AT_DISPATCH} lifecycle. Under CONTRACT-V2 it is emit-and-observe: it
+// FAILED_AT_DISPATCH} lifecycle. Under CONTRACT-DURABILITY it is emit-and-observe: it
 // mirrors every event to the durable feed, stops at appending the single
 // ACHIEVED record, and never settles in-process. A downstream consumer settles
 // from the feed.
@@ -48,7 +48,7 @@ func New(s scoring.Scorer, feed *durable.Store, store *idempotency.Store) *Gate 
 }
 
 // Authorize drives the full lifecycle deterministically (CONTRACT.md §gate
-// algorithm + CONTRACT-V2 §V2.3 deltas). It mirrors EVERY event to the durable
+// algorithm + CONTRACT-DURABILITY §V2.3 deltas). It mirrors EVERY event to the durable
 // feed as it appends to the in-memory per-intent log, preserving the per-intent
 // Seq and TrajectoryHash exactly as in slice 1.
 //

@@ -1,4 +1,4 @@
-// Package durable is the durable, append-only event feed (CONTRACT-V2 §V2.1).
+// Package durable is the durable, append-only event feed (CONTRACT-DURABILITY §V2.1).
 //
 // One physical file <dir>/events.jsonl mirrors every gate event for every
 // intent, carrying a global monotonic GlobalSeq alongside the preserved

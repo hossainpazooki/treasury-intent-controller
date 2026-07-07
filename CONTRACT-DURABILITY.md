@@ -1,4 +1,4 @@
-# CONTRACT-V2.md — treasury-intent-controller (durability + emit-and-observe)
+# CONTRACT-DURABILITY.md — treasury-intent-controller (durability + emit-and-observe)
 
 > **This file AMENDS `CONTRACT.md`. It lists DELTAS ONLY.** Every package, type, signature, and invariant in `CONTRACT.md` not named here is UNCHANGED and remains the source of truth. Where a symbol appears in both files, the declaration **here** wins. Module path `github.com/pazooki/treasury-intent-controller`, Go 1.26, **stdlib only, no new modules**, never run git. All test IO uses `t.TempDir()`; no test writes `./data`.
 
@@ -256,7 +256,7 @@ Two phases. **Phase 0 (scaffold)** brings the whole tree to a COMPILING baseline
 ### scaffold (phase 0)
 | File | State scaffold leaves it in |
 |---|---|
-| `CONTRACT-V2.md` | this document, in full |
+| `CONTRACT-DURABILITY.md` | this document, in full |
 | `internal/durable/store.go` | **FULL in-memory-correct implementation**: `Record` with exact JSON tags; `Open`/`Append`/`Since`/`ByIntent`/`Close` with correct in-process semantics and GlobalSeq assignment, but **NO file persistence yet** (a slice + counter). Compiles; in-process cursor tests pass. build-durable adds file/fsync/recovery. |
 | `internal/gate/gate.go` | new `Result` (no `Settlement`, `+AchievedSeq`), new `New(scorer, *durable.Store, *idempotency.Store)`, `Authorize` returning `(Result, error)` — **stub body** returns `Result{}, nil`; `adapter` import dropped. |
 | `internal/idempotency/store.go` | add `sync.Mutex` field + mutex-guard `Reserve`; add `OpenStore` **stub** that delegates to the in-memory path (no file yet). `NewStore`/`Reserve` semantics preserved. |

@@ -4,7 +4,7 @@
 
 **Goal:** A local web chat UI (FastAPI + single HTML page) for discussing treasury-intent-controller's design concepts with Claude Opus 4.8, primed on the repo's README and contracts.
 
-**Architecture:** Stateless FastAPI server — the browser holds the full conversation and POSTs it each turn; the server prepends a prompt-cached system prompt built from `README.md` + `CONTRACT.md` + `CONTRACT-V2.md` and streams the Opus reply back as SSE. Session-only persistence with a client-side markdown export.
+**Architecture:** Stateless FastAPI server — the browser holds the full conversation and POSTs it each turn; the server prepends a prompt-cached system prompt built from `README.md` + `CONTRACT.md` + `CONTRACT-DURABILITY.md` and streams the Opus reply back as SSE. Session-only persistence with a client-side markdown export.
 
 **Tech Stack:** Python 3.11+, FastAPI, uvicorn, `anthropic` SDK, vanilla JS + marked.js (CDN) for the page.
 
@@ -14,7 +14,7 @@
 
 - Tool lives at `C:\Users\hossa\dev\tic-concept-chat\` — **nothing** is written into `treasury-intent-controller/` except this plan and its spec (already present).
 - Model is exactly `claude-opus-4-8`; `max_tokens=64000`; `thinking={"type": "adaptive", "display": "summarized"}`; streaming only.
-- System prompt: framing paragraph + the three docs in order README → CONTRACT → CONTRACT-V2, `cache_control: {"type": "ephemeral"}` on the **last** block only. No per-request interpolation anywhere in the prefix.
+- System prompt: framing paragraph + the three docs in order README → CONTRACT → CONTRACT-DURABILITY, `cache_control: {"type": "ephemeral"}` on the **last** block only. No per-request interpolation anywhere in the prefix.
 - Auth: bare `anthropic.Anthropic()` — never read or store keys in this tool. Construct the client lazily (not at import) so tests import cleanly without credentials.
 - **Git: NEVER run `git commit`/`git push`.** At each commit checkpoint, output the exact command for Hossain to run and continue working. No attribution trailers in suggested messages.
 - Windows-local: keep any console `print()` ASCII; all files written UTF-8.
@@ -29,7 +29,7 @@
 - Test: `C:\Users\hossa\dev\tic-concept-chat\test_context.py`
 
 **Interfaces:**
-- Consumes: `../treasury-intent-controller/{README.md,CONTRACT.md,CONTRACT-V2.md}` on disk.
+- Consumes: `../treasury-intent-controller/{README.md,CONTRACT.md,CONTRACT-DURABILITY.md}` on disk.
 - Produces: `context.DOC_NAMES: tuple[str, ...]`, `context.load_docs(base: Path | None = None) -> dict[str, str]` (raises `FileNotFoundError` naming the missing path), `context.build_system_prompt(base: Path | None = None) -> list[dict]` (Anthropic system-block list, cache breakpoint on last block). Task 2 imports `build_system_prompt`.
 
 - [ ] **Step 1: Write requirements.txt**
@@ -88,13 +88,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DOC_NAMES = ("README.md", "CONTRACT.md", "CONTRACT-V2.md")
+DOC_NAMES = ("README.md", "CONTRACT.md", "CONTRACT-DURABILITY.md")
 
 FRAMING = """\
 You are a design discussion partner for the concepts underlying
 treasury-intent-controller ("tic"), the authorization plane of the ATLAS
 Treasury intent-gated action loop. The three authoritative documents follow
-(README, CONTRACT, CONTRACT-V2; where the contracts disagree, V2 wins).
+(README, CONTRACT, CONTRACT-DURABILITY; where the contracts disagree, CONTRACT-DURABILITY wins).
 
 Discuss the underlying concepts rigorously: the intent lifecycle state
 machine, tri-state fail-closed scoring, idempotency by construction at the
@@ -338,7 +338,7 @@ No automated test (per spec: light testing). Manual verification in Task 4.
 </head>
 <body>
 <header>
-  <h1>tic concept chat <small>claude-opus-4-8 · README + CONTRACT + CONTRACT-V2</small></h1>
+  <h1>tic concept chat <small>claude-opus-4-8 · README + CONTRACT + CONTRACT-DURABILITY</small></h1>
   <div>
     <button id="export">Export .md</button>
     <button id="reset">New conversation</button>
@@ -489,7 +489,7 @@ git -C C:/Users/hossa/dev commit -m "feat: tic-concept-chat web UI"
 Local web chat for discussing treasury-intent-controller's design concepts
 (intent lifecycle, tri-state fail-closed scoring, idempotency by
 construction, stable/volatile criteria, deterministic replay) with Claude
-Opus 4.8, primed on the repo's README + CONTRACT.md + CONTRACT-V2.md.
+Opus 4.8, primed on the repo's README + CONTRACT.md + CONTRACT-DURABILITY.md.
 
 ## Run
 

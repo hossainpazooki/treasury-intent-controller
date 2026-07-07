@@ -4,7 +4,7 @@
 // claimed exactly once. The store is deterministic and holds no wallclock or
 // randomness; reservation order does not affect the outcome of any single key.
 //
-// Under CONTRACT-V2 §V2.2 the store is mutex-guarded (it is shared across
+// Under CONTRACT-DURABILITY §V2.2 the store is mutex-guarded (it is shared across
 // concurrent requests at boot time) and gains a durable constructor, OpenStore.
 // NewStore remains the in-memory store used by unit tests; both satisfy the same
 // Reserve contract.

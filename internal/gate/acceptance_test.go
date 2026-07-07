@@ -1,6 +1,6 @@
 package gate
 
-// §12 acceptance tests for the authorization gate, rewritten per CONTRACT-V2
+// §12 acceptance tests for the authorization gate, rewritten per CONTRACT-DURABILITY
 // §V2.3 + §V2.6.
 //
 // Every slice-1 invariant (a)-(f) appears here with its exact §V2.6 successor

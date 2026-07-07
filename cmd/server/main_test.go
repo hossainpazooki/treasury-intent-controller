@@ -1,6 +1,6 @@
 package main
 
-// CONTRACT-V2 §V2.5 server tests. All IO lives under t.TempDir() (wired through
+// CONTRACT-DURABILITY §V2.5 server tests. All IO lives under t.TempDir() (wired through
 // TIC_DATA_DIR via t.Setenv, mirroring main's boot path); no test binds a port
 // (httptest.NewRecorder + mux.ServeHTTP) and no test touches the network.
 //
