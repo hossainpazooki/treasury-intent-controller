@@ -1,4 +1,9 @@
-"""FastAPI shell for tic-concept-chat: serves the page + one streaming endpoint."""
+"""FastAPI shell for tic-concept-chat: serves the page + one streaming endpoint.
+
+The docs are attached as citation-enabled `document` blocks, so the SSE stream
+carries `citation` events (each an anchor into README/CONTRACT/CONTRACT-V2)
+alongside `thinking` and `text`.
+"""
 from __future__ import annotations
 
 import functools
@@ -11,14 +16,15 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from context import build_system_prompt
+import context
 
 MODEL = "claude-opus-4-8"
 MAX_TOKENS = 64000
 STATIC = Path(__file__).resolve().parent / "static"
 
 # Built at import so a missing doc fails the server at startup, loudly.
-SYSTEM = build_system_prompt()
+SYSTEM = context.FRAMING
+DOCUMENTS = context.build_document_blocks()
 
 app = FastAPI()
 
@@ -38,20 +44,29 @@ def sse(payload: dict) -> str:
 
 
 def stream_reply(messages: list[dict]) -> Iterator[str]:
+    full = context.inject_documents(messages, blocks=DOCUMENTS)
     try:
         with get_client().messages.stream(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             system=SYSTEM,
             thinking={"type": "adaptive", "display": "summarized"},
-            messages=messages,
+            messages=full,
         ) as stream:
             for event in stream:
                 if event.type == "content_block_delta":
-                    if event.delta.type == "thinking_delta":
-                        yield sse({"type": "thinking", "text": event.delta.thinking})
-                    elif event.delta.type == "text_delta":
-                        yield sse({"type": "text", "text": event.delta.text})
+                    delta = event.delta
+                    if delta.type == "thinking_delta":
+                        yield sse({"type": "thinking", "text": delta.thinking})
+                    elif delta.type == "text_delta":
+                        yield sse({"type": "text", "text": delta.text})
+                    elif delta.type == "citations_delta":
+                        c = delta.citation
+                        yield sse({
+                            "type": "citation",
+                            "title": getattr(c, "document_title", "") or "",
+                            "text": getattr(c, "cited_text", "") or "",
+                        })
             final = stream.get_final_message()
             yield sse({
                 "type": "done",

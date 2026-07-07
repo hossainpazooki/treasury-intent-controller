@@ -28,6 +28,14 @@
   .msg code { font:13px/1.5 Consolas, monospace; }
   details { margin-bottom:8px; color:var(--dim); }
   details pre { white-space:pre-wrap; font-size:13px; }
+  sup.cite { color:var(--accent); font-weight:600; cursor:default; }
+  .sources { margin-top:10px; padding-top:8px; border-top:1px solid #2b3138; }
+  .sources-h { color:var(--accent); font-size:12px; text-transform:uppercase;
+               letter-spacing:.04em; margin-bottom:4px; }
+  .source { font-size:13px; margin-bottom:4px; }
+  .source-n { color:var(--accent); font-weight:600; }
+  .source-title { color:var(--dim); }
+  .source-quote { color:var(--fg); }
   .usage { color:var(--dim); font-size:12px; margin-top:6px; }
   .error { color:#f85149; }
   footer { display:flex; gap:8px; padding:12px 16px; background:var(--panel);
@@ -38,7 +46,8 @@
 </head>
 <body>
 <header>
-  <h1>tic concept chat <small>claude-opus-4-8 · README + CONTRACT + CONTRACT-V2</small></h1>
+  <h1>tic concept chat
+    <small>claude-opus-4-8 · README + CONTRACT + CONTRACT-DURABILITY · cited</small></h1>
   <div>
     <button id="export">Export .md</button>
     <button id="reset">New conversation</button>
@@ -54,7 +63,9 @@
 const log = document.getElementById('log');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
-let messages = [];
+// Full record for display + export (includes cites). The API payload is
+// derived from this as {role, content} only.
+let history = [];
 let busy = false;
 
 function addBubble(role) {
@@ -69,21 +80,48 @@ async function send() {
   if (!text || busy) return;
   busy = true; sendBtn.disabled = true;
   input.value = '';
-  messages.push({role: 'user', content: text});
+  history.push({role: 'user', content: text});
   addBubble('user').textContent = text;
 
   const bubble = addBubble('assistant');
   const think = document.createElement('details');
   think.innerHTML = '<summary>thinking…</summary><pre></pre>';
   const body = document.createElement('div');
-  bubble.append(think, body);
-  let answer = '', thinking = '';
+  const sourcesEl = document.createElement('div');
+  sourcesEl.className = 'sources';
+  bubble.append(think, body, sourcesEl);
+
+  // answer = clean text (history + API + export). display = answer with
+  // inline [n] markers. cites = ordered anchors into the contracts.
+  let answer = '', display = '', thinking = '';
+  const cites = [];
+
+  function renderSources() {
+    sourcesEl.innerHTML = '';
+    if (!cites.length) return;
+    const h = document.createElement('div');
+    h.className = 'sources-h';
+    h.textContent = 'Sources';
+    sourcesEl.appendChild(h);
+    cites.forEach((c, i) => {
+      const row = document.createElement('div');
+      row.className = 'source';
+      const n = document.createElement('span');
+      n.className = 'source-n'; n.textContent = `[${i + 1}] `;
+      const t = document.createElement('span');
+      t.className = 'source-title'; t.textContent = c.title + ': ';
+      const q = document.createElement('span');
+      q.className = 'source-quote'; q.textContent = '"' + c.text + '"';
+      row.append(n, t, q);
+      sourcesEl.appendChild(row);
+    });
+  }
 
   try {
     const resp = await fetch('/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({messages}),
+      body: JSON.stringify({messages: history.map(m => ({role: m.role, content: m.content}))}),
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const reader = resp.body.getReader();
@@ -104,7 +142,13 @@ async function send() {
           think.querySelector('pre').textContent = thinking;
         } else if (ev.type === 'text') {
           answer += ev.text;
-          body.innerHTML = marked.parse(answer);
+          display += ev.text;
+          body.innerHTML = marked.parse(display);
+        } else if (ev.type === 'citation') {
+          cites.push({title: ev.title, text: ev.text});
+          display += ` <sup class="cite">[${cites.length}]</sup>`;
+          body.innerHTML = marked.parse(display);
+          renderSources();
         } else if (ev.type === 'error') {
           const p = document.createElement('p');
           p.className = 'error';
@@ -128,7 +172,7 @@ async function send() {
     bubble.appendChild(p);
   }
   if (!thinking) think.remove();
-  if (answer) messages.push({role: 'assistant', content: answer});
+  if (answer) history.push({role: 'assistant', content: answer, cites});
   busy = false; sendBtn.disabled = false;
   input.focus();
 }
@@ -139,16 +183,21 @@ input.addEventListener('keydown', e => {
 });
 
 document.getElementById('reset').addEventListener('click', () => {
-  messages = [];
+  history = [];
   log.innerHTML = '';
   input.focus();
 });
 
 document.getElementById('export').addEventListener('click', () => {
-  if (!messages.length) return;
-  const md = messages.map(m =>
-    (m.role === 'user' ? '## You\n\n' : '## Opus\n\n') + m.content
-  ).join('\n\n---\n\n');
+  if (!history.length) return;
+  const md = history.map(m => {
+    let block = (m.role === 'user' ? '## You\n\n' : '## Opus\n\n') + m.content;
+    if (m.cites && m.cites.length) {
+      block += '\n\n**Sources:**\n' +
+        m.cites.map((c, i) => `${i + 1}. *${c.title}*: "${c.text}"`).join('\n');
+    }
+    return block;
+  }).join('\n\n---\n\n');
   const stamp = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([md], {type: 'text/markdown'}));

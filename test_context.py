@@ -17,10 +17,41 @@ def test_missing_doc_fails_loudly(tmp_path):
     assert "README.md" in str(exc.value)
 
 
-def test_system_prompt_shape():
-    blocks = context.build_system_prompt()
-    assert len(blocks) == 1 + len(context.DOC_NAMES)
-    assert blocks[0]["text"].startswith("You are a design discussion partner")
+def test_framing_is_text():
+    assert isinstance(context.FRAMING, str)
+    assert context.FRAMING.startswith("You are a design discussion partner")
+
+
+def test_document_blocks_shape():
+    blocks = context.build_document_blocks()
+    assert len(blocks) == len(context.DOC_NAMES)
+    for b in blocks:
+        assert b["type"] == "document"
+        assert b["source"]["type"] == "text"
+        assert b["source"]["media_type"] == "text/plain"
+        assert b["source"]["data"], "document data must be non-empty"
+        assert b["citations"] == {"enabled": True}
+    # Cache breakpoint on the last block only.
     cached = [b for b in blocks if "cache_control" in b]
     assert cached == [blocks[-1]]
     assert blocks[-1]["cache_control"] == {"type": "ephemeral"}
+    assert blocks[-1]["title"] == "CONTRACT-DURABILITY.md"
+
+
+def test_inject_documents_prepends_and_preserves():
+    msgs = [{"role": "user", "content": "hi"}]
+    out = context.inject_documents(msgs)
+
+    # Original is untouched.
+    assert msgs[0]["content"] == "hi"
+
+    content = out[0]["content"]
+    assert isinstance(content, list)
+    assert len(content) == len(context.DOC_NAMES) + 1
+    assert all(b["type"] == "document" for b in content[:-1])
+    assert content[-2]["title"] == "CONTRACT-DURABILITY.md"  # last doc, then the question
+    assert content[-1] == {"type": "text", "text": "hi"}
+
+
+def test_inject_documents_empty_guard():
+    assert context.inject_documents([]) == []
