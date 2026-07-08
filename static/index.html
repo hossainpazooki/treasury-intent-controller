@@ -37,6 +37,17 @@
   .source-title { color:var(--dim); }
   .source-quote { color:var(--fg); }
   .usage { color:var(--dim); font-size:12px; margin-top:6px; }
+  .skeptic { margin-top:10px; padding-top:8px; border-top:1px solid #2b3138; }
+  .skeptic-h { color:var(--accent); font-size:12px; text-transform:uppercase;
+               letter-spacing:.04em; margin-bottom:4px; }
+  .skeptic-claim { font-size:13px; margin-bottom:4px; }
+  .chip { display:inline-block; min-width:88px; margin-right:6px; padding:0 6px;
+          border-radius:10px; font-size:12px; border:1px solid #3a4149; color:var(--dim); }
+  .chip.supported { color:#3fb950; border-color:#3fb950; }
+  .chip.overreach { color:#f85149; border-color:#f85149; }
+  .chip.marked-inference { color:var(--dim); }
+  .chip.unmarked-inference { color:var(--accent); border-color:var(--accent); }
+  .skeptic-summary { color:var(--dim); font-size:12px; margin-top:4px; }
   .error { color:#f85149; }
   footer { display:flex; gap:8px; padding:12px 16px; background:var(--panel);
            border-top:1px solid #2b3138; }
@@ -47,7 +58,7 @@
 <body>
 <header>
   <h1>tic concept chat
-    <small>claude-opus-4-8 · README + CONTRACT + DURABILITY + SCORER · cited</small></h1>
+    <small>README + CONTRACT + DURABILITY + SCORER · cited · skeptic-checked</small></h1>
   <div>
     <button id="export">Export .md</button>
     <button id="reset">New conversation</button>
@@ -90,6 +101,44 @@ async function send() {
   const sourcesEl = document.createElement('div');
   sourcesEl.className = 'sources';
   bubble.append(think, body, sourcesEl);
+
+  const skepticEl = document.createElement('div');
+  skepticEl.className = 'skeptic';
+  bubble.appendChild(skepticEl);
+  const chipByClaim = {};
+
+  const CHIP = {
+    'supported':          ['✓ supported',  'supported'],
+    'overreach':          ['✗ overreach',  'overreach'],
+    'marked-inference':   ['○ inference',  'marked-inference'],
+    'unmarked-inference': ['⚠ unmarked',   'unmarked-inference'],
+  };
+
+  function renderClaims(claims) {
+    skepticEl.innerHTML = '';
+    const h = document.createElement('div');
+    h.className = 'skeptic-h';
+    h.textContent = 'Skeptic';
+    skepticEl.appendChild(h);
+    claims.forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'skeptic-claim';
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.textContent = '… judging';
+      const t = document.createElement('span');
+      t.textContent = c.claim_text;
+      row.append(chip, t);
+      skepticEl.appendChild(row);
+      chipByClaim[c.id] = chip;
+    });
+    if (!claims.length) {
+      const p = document.createElement('div');
+      p.className = 'skeptic-summary';
+      p.textContent = 'no claims extracted';
+      skepticEl.appendChild(p);
+    }
+  }
 
   // answer = clean text (history + API + export). display = answer with
   // inline [n] markers. cites = ordered anchors into the contracts.
@@ -161,6 +210,26 @@ async function send() {
           p.textContent = `in ${u.input_tokens} / out ${u.output_tokens} / ` +
             `cache write ${u.cache_creation_input_tokens} / cache read ${u.cache_read_input_tokens}`;
           bubble.appendChild(p);
+        } else if (ev.type === 'skeptic_claims') {
+          renderClaims(ev.claims);
+        } else if (ev.type === 'skeptic_verdict') {
+          const chip = chipByClaim[ev.id];
+          if (chip) {
+            const [label, cls] = CHIP[ev.verdict] || [ev.verdict, ''];
+            chip.textContent = label;
+            if (cls) chip.classList.add(cls);
+          }
+        } else if (ev.type === 'skeptic_done') {
+          const p = document.createElement('div');
+          p.className = 'skeptic-summary';
+          p.textContent = Object.entries(ev.counts)
+            .map(([k, v]) => `${v} ${k}`).join(' · ') || 'nothing to judge';
+          skepticEl.appendChild(p);
+        } else if (ev.type === 'skeptic_error') {
+          const p = document.createElement('div');
+          p.className = 'skeptic-summary error';
+          p.textContent = 'skeptic pass failed: ' + ev.message;
+          skepticEl.appendChild(p);
         }
       }
       log.scrollTop = log.scrollHeight;
@@ -172,6 +241,7 @@ async function send() {
     bubble.appendChild(p);
   }
   if (!thinking) think.remove();
+  if (!skepticEl.childNodes.length) skepticEl.remove();
   if (answer) history.push({role: 'assistant', content: answer, cites});
   busy = false; sendBtn.disabled = false;
   input.focus();
@@ -191,7 +261,7 @@ document.getElementById('reset').addEventListener('click', () => {
 document.getElementById('export').addEventListener('click', () => {
   if (!history.length) return;
   const md = history.map(m => {
-    let block = (m.role === 'user' ? '## You\n\n' : '## Opus\n\n') + m.content;
+    let block = (m.role === 'user' ? '## You\n\n' : '## Claude\n\n') + m.content;
     if (m.cites && m.cites.length) {
       block += '\n\n**Sources:**\n' +
         m.cites.map((c, i) => `${i + 1}. *${c.title}*: "${c.text}"`).join('\n');
