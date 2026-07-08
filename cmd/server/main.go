@@ -16,11 +16,13 @@
 // TIC_DATA_DIR, default "./data"); handlers share them. The per-request Gate is
 // a thin wrapper over those shared singletons.
 //
-// The probe drives a deterministic terminal WITHOUT a live Python scorer by
-// passing an optional "force_scores" map (criterion -> {declaration, dispatch}
-// results). That map backs a small inline Scorer (forceScorer) which defaults a
-// missing criterion/result to Pass. This is a documented test affordance; the
-// real /ml/evaluate HTTPScorer is a later slice.
+// Scorer selection (CONTRACT-SCORER §S.0/§S.3): a request carrying
+// "force_scores" (criterion -> {declaration, dispatch} results) scores through
+// the inline forceScorer — the documented test affordance, preserved verbatim.
+// Every other request scores through ONE boot-time shared HTTPScorer built from
+// TIC_SCORER_URL. Unset TIC_SCORER_URL means an empty endpoint, every Score is
+// Unevaluable, and the gate refuses everything: the zero-config server
+// authorizes nothing.
 //
 package main
 
@@ -140,7 +142,14 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	_, _ = io.WriteString(w, "ok")
 }
 
-func handleIntents(feed *durable.Store, istore *idempotency.Store) http.HandlerFunc {
+// scorerFromEnv builds the boot-time shared scorer from TIC_SCORER_URL. Unset
+// yields an empty endpoint whose every Score is Unevaluable (fail-closed;
+// CONTRACT-SCORER §S.0: the zero-config server authorizes nothing).
+func scorerFromEnv() *scoring.HTTPScorer {
+	return scoring.NewHTTPScorer(os.Getenv("TIC_SCORER_URL"))
+}
+
+func handleIntents(feed *durable.Store, istore *idempotency.Store, live scoring.Scorer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req intentRequest
 		dec := json.NewDecoder(r.Body)
@@ -169,8 +178,13 @@ func handleIntents(feed *durable.Store, istore *idempotency.Store) http.HandlerF
 		}
 
 		// Per-request gate over the SHARED boot-time stores (the slice-1
-		// per-request fresh store is gone by contract).
-		scorer := forceScorer{scores: req.ForceScores}
+		// per-request fresh store is gone by contract). force_scores present
+		// selects the forced scorer (test affordance); otherwise the shared
+		// live scorer (CONTRACT-SCORER §S.3).
+		var scorer scoring.Scorer = live
+		if req.ForceScores != nil {
+			scorer = forceScorer{scores: req.ForceScores}
+		}
 		g := gate.New(scorer, feed, istore)
 		res, err := g.Authorize(r.Context(), i)
 		if err != nil {
@@ -225,10 +239,10 @@ func handleIntentEvents(feed *durable.Store) http.HandlerFunc {
 
 // newMux wires the routes over the boot-time shared stores. Split out so tests
 // can drive it via httptest without binding a port.
-func newMux(feed *durable.Store, istore *idempotency.Store) *http.ServeMux {
+func newMux(feed *durable.Store, istore *idempotency.Store, live scoring.Scorer) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
-	mux.HandleFunc("POST /v2/intents", handleIntents(feed, istore))
+	mux.HandleFunc("POST /v2/intents", handleIntents(feed, istore, live))
 	mux.HandleFunc("GET /v2/events", handleEvents(feed))
 	mux.HandleFunc("GET /v2/intents/{id}/events", handleIntentEvents(feed))
 	return mux
@@ -248,10 +262,18 @@ func main() {
 		log.Fatalf("open idempotency store: %v", err)
 	}
 
+	// ONE shared scorer at boot, like the stores (CONTRACT-SCORER §S.3).
+	live := scorerFromEnv()
+	if live.Endpoint == "" {
+		log.Printf("TIC_SCORER_URL unset: every non-forced score is UNEVALUABLE (gate refuses everything)")
+	} else {
+		log.Printf("live scorer at %s", live.Endpoint)
+	}
+
 	addr := ":8080"
 	if v := os.Getenv("TIC_ADDR"); v != "" {
 		addr = v
 	}
 	log.Printf("treasury-intent-controller listening on %s (data dir %s)", addr, dir)
-	log.Fatal(http.ListenAndServe(addr, newMux(feed, istore)))
+	log.Fatal(http.ListenAndServe(addr, newMux(feed, istore, live)))
 }

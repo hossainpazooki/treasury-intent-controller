@@ -57,7 +57,9 @@ func boot(t *testing.T, dir string) *testServer {
 		_ = feed.Close()
 		t.Fatalf("idempotency.OpenStore(%q): %v", dataDir, err)
 	}
-	ts := &testServer{t: t, mux: newMux(feed, istore), feed: feed, istore: istore}
+	// Mirror main: the shared live scorer comes from TIC_SCORER_URL (tests set
+	// it via t.Setenv BEFORE boot; unset means zero-config refusal).
+	ts := &testServer{t: t, mux: newMux(feed, istore, scorerFromEnv()), feed: feed, istore: istore}
 	t.Cleanup(ts.close) // double Close is a no-op on both stores
 	return ts
 }
@@ -130,6 +132,24 @@ func intentBody(seed, key, specHash, declaration, dispatch string) string {
 // intentID computes the deterministic intent ID exactly as the gate does.
 func intentID(seed string) string {
 	return intent.Intent{EpisodeSeed: seed}.ID()
+}
+
+// intentBodyNoForce builds the same request WITHOUT force_scores: the server
+// must route scoring to the boot-time shared scorer (CONTRACT-SCORER §S.3).
+func intentBodyNoForce(seed, key, specHash string) string {
+	return fmt.Sprintf(`{
+		"episode_seed": %q,
+		"idempotency_key": %q,
+		"rule_artifact_hash": "rule-hash-1",
+		"intent_spec_hash": %q,
+		"spec": {
+			"action_class": "payment",
+			"idempotency_scope": "payer",
+			"criteria": [
+				{"name": "balance", "threshold": 1.0, "volatility": "volatile"}
+			]
+		}
+	}`, seed, key, specHash)
 }
 
 func TestHealthz(t *testing.T) {
@@ -345,6 +365,199 @@ func TestIntentEventsOrder(t *testing.T) {
 	}
 	if recheckIdx == -1 || achievedIdx == -1 || achievedIdx <= recheckIdx {
 		t.Fatalf("ACHIEVED (idx %d) must be ordered after the volatile RECHECK (idx %d)", achievedIdx, recheckIdx)
+	}
+}
+
+// TestZeroConfigRefusesEverything (CONTRACT-SCORER §S.0/§S.3): no force_scores
+// and no TIC_SCORER_URL means the shared HTTPScorer has an empty endpoint, so
+// every criterion scores Unevaluable and the gate refuses at declaration. The
+// zero-config server authorizes nothing.
+func TestZeroConfigRefusesEverything(t *testing.T) {
+	t.Setenv("TIC_SCORER_URL", "")
+	ts := boot(t, t.TempDir())
+
+	resp := ts.postIntent(intentBodyNoForce("seed-zeroconf", "key-zeroconf", "spec-hash-zc"))
+	if resp.Terminal != string(lifecycle.Failed) {
+		t.Fatalf("terminal = %q, want %q (zero-config must refuse)", resp.Terminal, lifecycle.Failed)
+	}
+	if resp.Reason != "unevaluable:balance" {
+		t.Fatalf("reason = %q, want %q", resp.Reason, "unevaluable:balance")
+	}
+	if ev := ts.getEvents("?type=ACHIEVED"); len(ev.Events) != 0 {
+		t.Fatalf("zero-config run must leave no ACHIEVED record, got %+v", ev.Events)
+	}
+}
+
+// TestLiveScorerDrivesTerminal (CONTRACT-SCORER §S.3): with no force_scores and
+// TIC_SCORER_URL pointing at an httptest scorer, the terminal follows the
+// scorer's answers — and the calls actually cross the HTTP seam.
+func TestLiveScorerDrivesTerminal(t *testing.T) {
+	t.Run("scorer PASS everywhere yields ACHIEVED", func(t *testing.T) {
+		calls := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"result":"PASS","basis":"test scorer"}`))
+		}))
+		defer srv.Close()
+		t.Setenv("TIC_SCORER_URL", srv.URL)
+		ts := boot(t, t.TempDir())
+
+		resp := ts.postIntent(intentBodyNoForce("seed-live-pass", "key-live-pass", "spec-hash-lp"))
+		if resp.Terminal != string(lifecycle.Achieved) {
+			t.Fatalf("terminal = %q, want ACHIEVED", resp.Terminal)
+		}
+		// One volatile criterion: declaration + dispatch-edge recheck must BOTH
+		// cross the wire (spec invariant 3 over the live seam).
+		if calls != 2 {
+			t.Fatalf("scorer saw %d calls, want 2 (declaration + volatile recheck)", calls)
+		}
+	})
+
+	t.Run("scorer FAIL at declaration yields FAILED", func(t *testing.T) {
+		calls := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"result":"FAIL","basis":"test scorer"}`))
+		}))
+		defer srv.Close()
+		t.Setenv("TIC_SCORER_URL", srv.URL)
+		ts := boot(t, t.TempDir())
+
+		resp := ts.postIntent(intentBodyNoForce("seed-live-fail", "key-live-fail", "spec-hash-lf"))
+		if resp.Terminal != string(lifecycle.Failed) {
+			t.Fatalf("terminal = %q, want FAILED", resp.Terminal)
+		}
+		if calls == 0 {
+			t.Fatalf("the scorer was never called: terminal did not come from the HTTP seam")
+		}
+		if ev := ts.getEvents("?type=ACHIEVED"); len(ev.Events) != 0 {
+			t.Fatalf("failed run must leave no ACHIEVED record, got %+v", ev.Events)
+		}
+	})
+}
+
+// TestForceScoresStillWins (CONTRACT-SCORER §S.0): force_scores present must
+// select the forced scorer even when TIC_SCORER_URL is configured — the
+// documented test affordance is preserved verbatim.
+func TestForceScoresStillWins(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("live scorer must NOT be called when force_scores is present")
+	}))
+	defer srv.Close()
+	t.Setenv("TIC_SCORER_URL", srv.URL)
+	ts := boot(t, t.TempDir())
+
+	resp := ts.postIntent(intentBody("seed-force-wins", "key-force-wins", "spec-hash-fw", "PASS", "PASS"))
+	if resp.Terminal != string(lifecycle.Achieved) {
+		t.Fatalf("terminal = %q, want ACHIEVED via force_scores", resp.Terminal)
+	}
+}
+
+// TestDeterminismConditionalOnScores (CONTRACT-SCORER §S.8 claim 4): given the
+// same score per (criterion, phase), the gate's events and TrajectoryHash are
+// byte-identical whether the forced scorer or the live HTTPScorer produced
+// them — and the scorer's free-text basis appears NOWHERE in the durable feed.
+func TestDeterminismConditionalOnScores(t *testing.T) {
+	const poison = "POISON-BASIS-MARKER-must-never-be-durable"
+
+	// Run A: forced scorer, PASS at both phases.
+	t.Setenv("TIC_SCORER_URL", "")
+	tsA := boot(t, t.TempDir())
+	respA := tsA.postIntent(intentBody("seed-det", "key-det", "spec-det", "PASS", "PASS"))
+	eventsA := tsA.getEvents("?since=0").Events
+	tsA.close()
+
+	// Run B: live httptest scorer answering the SAME scores, with a poisoned
+	// basis that must stay observability-only.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":"PASS","basis":"` + poison + `"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TIC_SCORER_URL", srv.URL)
+	tsB := boot(t, t.TempDir())
+	respB := tsB.postIntent(intentBodyNoForce("seed-det", "key-det", "spec-det"))
+	eventsB := tsB.getEvents("?since=0").Events
+
+	if respA.Terminal != respB.Terminal || respA.TrajectoryHash != respB.TrajectoryHash {
+		t.Fatalf("terminal/hash diverged across scorers:\n forced: %+v\n live:   %+v", respA, respB)
+	}
+	if len(eventsA) != len(eventsB) {
+		t.Fatalf("event counts diverged: forced %d, live %d", len(eventsA), len(eventsB))
+	}
+	for i := range eventsA {
+		if eventsA[i] != eventsB[i] {
+			t.Fatalf("event %d diverged across scorers:\n forced: %+v\n live:   %+v", i, eventsA[i], eventsB[i])
+		}
+	}
+
+	// basis must be nowhere in the durable feed — not as a field, not as text.
+	raw, err := json.Marshal(eventsB)
+	if err != nil {
+		t.Fatalf("marshal events: %v", err)
+	}
+	if strings.Contains(string(raw), poison) || strings.Contains(string(raw), `"basis"`) {
+		t.Fatalf("basis leaked into the durable feed: %s", raw)
+	}
+}
+
+// TestStableOnceVolatileTwiceAcrossWire (CONTRACT-SCORER §S.8 claim 5): a
+// counting scorer sees exactly one declaration call per criterion and exactly
+// one extra dispatch call per VOLATILE criterion — spec invariant 3 holds
+// across the live seam, as an exact call multiset.
+func TestStableOnceVolatileTwiceAcrossWire(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Criterion string `json:"criterion"`
+			Phase     string `json:"phase"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		calls = append(calls, req.Criterion+"/"+req.Phase)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":"PASS"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TIC_SCORER_URL", srv.URL)
+	ts := boot(t, t.TempDir())
+
+	body := `{
+		"episode_seed": "seed-multiset",
+		"idempotency_key": "key-multiset",
+		"rule_artifact_hash": "rule-hash-1",
+		"intent_spec_hash": "spec-hash-m",
+		"spec": {
+			"action_class": "payment",
+			"idempotency_scope": "payer",
+			"criteria": [
+				{"name": "balance", "threshold": 1.0, "volatility": "stable"},
+				{"name": "fx_rate", "threshold": 1.0, "volatility": "volatile"}
+			]
+		}
+	}`
+	resp := ts.postIntent(body)
+	if resp.Terminal != string(lifecycle.Achieved) {
+		t.Fatalf("terminal = %q, want ACHIEVED", resp.Terminal)
+	}
+
+	want := map[string]int{
+		"balance/declaration": 1, // stable: once, never re-verified
+		"fx_rate/declaration": 1,
+		"fx_rate/dispatch":    1, // volatile: exactly one dispatch-edge recheck
+	}
+	got := map[string]int{}
+	for _, c := range calls {
+		got[c]++
+	}
+	if len(got) != len(want) {
+		t.Fatalf("call multiset = %v, want %v", got, want)
+	}
+	for k, n := range want {
+		if got[k] != n {
+			t.Fatalf("call %q seen %d times, want %d (full multiset %v)", k, got[k], n, got)
+		}
 	}
 }
 

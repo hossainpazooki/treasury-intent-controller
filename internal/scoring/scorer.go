@@ -10,9 +10,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/pazooki/treasury-intent-controller/internal/intent"
 )
+
+// DefaultTimeout bounds one /ml/evaluate call. A slower scorer is Unevaluable
+// (CONTRACT-SCORER §S.0: a timeout is a transport error like any other).
+const DefaultTimeout = 5 * time.Second
 
 // Score is the tri-state result of scoring a criterion.
 type Score int
@@ -49,15 +54,28 @@ type HTTPScorer struct {
 	Client   *http.Client
 }
 
+// NewHTTPScorer returns an HTTPScorer whose client times out at DefaultTimeout.
+// An empty endpoint yields a scorer whose every Score is Unevaluable — the
+// zero-config server authorizes nothing (CONTRACT-SCORER §S.0).
+func NewHTTPScorer(endpoint string) *HTTPScorer {
+	return &HTTPScorer{
+		Endpoint: endpoint,
+		Client:   &http.Client{Timeout: DefaultTimeout},
+	}
+}
+
 // Score POSTs an EvalRequest to the configured endpoint and maps the response
 // result to a Score. ANY transport error, non-2xx status, or decode failure maps
 // to Unevaluable (fail-closed) — never a silent pass.
 func (h *HTTPScorer) Score(ctx context.Context, i intent.Intent, c intent.Criterion, phase intent.Phase) Score {
 	body, err := json.Marshal(EvalRequest{
-		IntentID:  i.ID(),
-		Criterion: c.Name,
-		Threshold: c.Threshold,
-		Phase:     string(phase),
+		IntentID:         i.ID(),
+		Criterion:        c.Name,
+		Threshold:        c.Threshold,
+		Phase:            string(phase),
+		Volatility:       string(c.Volatility),
+		RuleArtifactHash: i.RuleArtifactHash,
+		IntentSpecHash:   i.IntentSpecHash,
 	})
 	if err != nil {
 		return Unevaluable
@@ -99,17 +117,24 @@ func (h *HTTPScorer) Score(ctx context.Context, i intent.Intent, c intent.Criter
 	}
 }
 
-// EvalRequest is the /ml/evaluate request JSON contract.
+// EvalRequest is the /ml/evaluate request JSON contract (CONTRACT-SCORER §S.1;
+// additive evolution only — nothing renamed, retyped, or removed).
 type EvalRequest struct {
-	IntentID  string  `json:"intent_id"`
-	Criterion string  `json:"criterion"`
-	Threshold float64 `json:"threshold"`
-	Phase     string  `json:"phase"`
+	IntentID         string  `json:"intent_id"`
+	Criterion        string  `json:"criterion"`
+	Threshold        float64 `json:"threshold"`
+	Phase            string  `json:"phase"`
+	Volatility       string  `json:"volatility"`                   // "stable" | "volatile"
+	RuleArtifactHash string  `json:"rule_artifact_hash,omitempty"` // opaque passthrough
+	IntentSpecHash   string  `json:"intent_spec_hash,omitempty"`   // opaque passthrough
 }
 
-// EvalResponse is the /ml/evaluate response JSON contract.
+// EvalResponse is the /ml/evaluate response JSON contract. Basis is
+// observability only: it MUST NEVER enter the audit log, the durable feed, or
+// any hash (CONTRACT-SCORER §S.0).
 type EvalResponse struct {
 	Result string `json:"result"`
+	Basis  string `json:"basis,omitempty"`
 }
 
 // ScoreKey identifies a (criterion name, phase) pair.
