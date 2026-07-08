@@ -118,9 +118,10 @@ holds end to end.
 | `internal/gate` | the authorization engine + §12 acceptance tests |
 | `cmd/server` | HTTP shell: `POST /v2/intents`, `GET /v2/events`, `GET /v2/intents/{id}/events`, `GET /healthz`; state under `TIC_DATA_DIR` |
 
-`CONTRACT.md` (slice 1) amended by `CONTRACT-DURABILITY.md` (durability +
-emit-and-observe deltas) are the authoritative type/signature contracts; where both
-name a symbol, `CONTRACT-DURABILITY.md` wins.
+`CONTRACT.md` (slice 1), amended by `CONTRACT-DURABILITY.md` (durability +
+emit-and-observe deltas) and `CONTRACT-SCORER.md` (the `/ml/evaluate` wire seam),
+are the authoritative type/signature contracts; where they name the same symbol,
+the most recent contract wins.
 
 ## Build & test
 
@@ -136,7 +137,8 @@ go test ./... -count=1 -race   # needs cgo; on a Windows host without a C compil
 **Built and verified** — slice 1 plus the durability + emit-and-observe refactor.
 The gate stops at appending `ACHIEVED`; settlement happens only in a consumer
 observing the durable feed (test-only reference consumer in-repo). The criterion
-scorer (`/ml/evaluate`) is a real interface exercised by in-package fakes; the
-production scorer (Python) and the settlement consumer (COMPASS/TypeScript) are
-separate slices, as is the ATLAS `IntentSpec` artifact type that publishes the
-criteria this gate consumes.
+scorer (`/ml/evaluate`) is a real interface exercised by in-package fakes; its
+wire seam is **contract-complete** (`CONTRACT-SCORER.md`) with the implementation
+planned — the production scorer (Python) and the settlement consumer
+(COMPASS/TypeScript) are separate slices, as is the ATLAS `IntentSpec` artifact
+type that publishes the criteria this gate consumes.
