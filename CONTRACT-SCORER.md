@@ -87,6 +87,10 @@ for forward compatibility; the five slice-1 fields are required):
   scoring, once Stage A lands. **When present and a resolver is configured,
   verification failure ⟹ `UNEVALUABLE`.** When absent or no resolver: skip
   verification (recorded in `basis`), score from facts.
+- **Acknowledged debt (ADR-0003)**: `threshold` is `float64` on this wire while
+  ATLAS IntentSpecIR thresholds are exact `ScalarValue` (no floats) — a lossy
+  boundary, consciously deferred to the resolver-extraction slice (where the
+  exact scalar actually crosses), not fixed here.
 
 Response (`200` for every well-formed request):
 
