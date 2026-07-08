@@ -17,8 +17,12 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 import context
+import models
+import skeptic
 
-MODEL = "claude-opus-4-8"
+# Resolved at import so a missing/malformed config or unknown role fails the
+# server at startup, loudly - same posture as the doc loading below.
+MODEL = models.resolve("discussion")
 MAX_TOKENS = 64000
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -45,6 +49,7 @@ def sse(payload: dict) -> str:
 
 def stream_reply(messages: list[dict]) -> Iterator[str]:
     full = context.inject_documents(messages, blocks=DOCUMENTS)
+    final = None
     try:
         with get_client().messages.stream(
             model=MODEL,
@@ -87,6 +92,25 @@ def stream_reply(messages: list[dict]) -> Iterator[str]:
         yield sse({"type": "error", "message": "Network error reaching the API."})
     except Exception as e:  # e.g. SDK TypeError when no credentials resolve
         yield sse({"type": "error", "message": f"{type(e).__name__}: {e}"})
+    if final is not None:
+        yield from skeptic_pass(final.content)
+
+
+def skeptic_pass(final_content: list) -> Iterator[str]:
+    """Lanes 2-3 on the same stream, after the reply is fully delivered.
+    Failure here never taints the delivered reply: skeptic_error, then
+    end-of-stream - no retroactive mutation."""
+    try:
+        claims = skeptic.extract_claims(get_client(), final_content)
+        yield sse({"type": "skeptic_claims", "claims": claims["claims"]})
+        verdicts = skeptic.judge_claims(get_client(), claims)
+        counts: dict[str, int] = {}
+        for v in verdicts:
+            counts[v["verdict"]] = counts.get(v["verdict"], 0) + 1
+            yield sse({"type": "skeptic_verdict", "id": v["id"], "verdict": v["verdict"]})
+        yield sse({"type": "skeptic_done", "counts": counts})
+    except Exception as e:
+        yield sse({"type": "skeptic_error", "message": f"{type(e).__name__}: {e}"})
 
 
 @app.post("/chat")
