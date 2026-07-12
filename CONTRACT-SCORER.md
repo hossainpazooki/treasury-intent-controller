@@ -47,11 +47,13 @@ into pass, and EVERY failure of the network, the service, or the facts is
   (unchanged, test affordance); else `HTTPScorer` on `TIC_SCORER_URL`; unset
   `TIC_SCORER_URL` ⟹ empty endpoint ⟹ every Score is `Unevaluable` ⟹ the gate
   refuses everything. **The zero-config server authorizes nothing.**
-- The Python service lives at `C:\Users\hossa\dev\treasury-intent-scorer`
-  (greenfield sibling; FastAPI + pydantic + pytest; Python 3.11+). It is the
-  spec's ONE resolver+scorer service: the `ke-artifact-py` reader is INJECTED
-  behind a protocol and is **absent on Windows-local by design** (the wheel only
-  builds on Linux/CI — never rebuild a binding, per program memory).
+- The Python service lives at `scorer/` in THIS repo (FastAPI + pydantic +
+  pytest; Python 3.11+). *Amended 2026-07-08 by Hossain: this repo is the ONE
+  intent-layer repo — gate, scorer, contracts, and wire fixtures together; the
+  original "greenfield sibling repo" placement is superseded.* It is the spec's
+  ONE resolver+scorer service: the `ke-artifact-py` reader is INJECTED behind a
+  protocol and is **absent on Windows-local by design** (the wheel only builds
+  on Linux/CI — never rebuild a binding, per program memory).
 - Reader calls run off the event loop (executor thread): `ke-artifact-py`'s
   `verify()` holds the GIL through crypto, and must not stall a concurrent
   `/ml/evaluate` (recorded GIL caveat).
@@ -207,8 +209,9 @@ side (`scorer_test.go`) asserts `EvalRequest` marshals byte-identically to each
 request fixture and decodes each response fixture to the expected `Score`. The
 Python side parses each request fixture (pydantic) and asserts its serialized
 response equals the response fixture. Python locates the fixtures via
-`TIC_CONTRACT_DIR` (default: the sibling checkout path); if absent, those tests
-**skip visibly** — CI runs both repos together so the skip never hides drift.
+`TIC_CONTRACT_DIR` (default: `contract/scorer` in this repo — same-repo since
+the 2026-07-08 one-repo amendment); if absent, those tests **skip visibly** —
+a skipped fixture test is never a green one.
 
 ## §S.6 File → owner map (NO overlaps)
 
@@ -217,7 +220,7 @@ response equals the response fixture. Python locates the fixtures via
 | `contract/scorer/*.json` (fixtures) | scaffold |
 | `internal/scoring/scorer.go` + `scorer_test.go` | build-go-client |
 | `cmd/server/main.go` + `main_test.go` (scorer wiring only) | build-go-server |
-| `treasury-intent-scorer/**` | build-py-service |
+| `scorer/**` (the Python service, this repo) | build-py-service |
 | live two-process probe (gate + service) | integrate |
 
 ## §S.7 Hard rules

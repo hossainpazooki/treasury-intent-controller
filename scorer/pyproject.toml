@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "treasury-intent-scorer"
+version = "0.1.0"
+description = "Resolver + scorer service for the ATLAS Treasury intent loop (POST /ml/evaluate, CONTRACT-SCORER)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.7",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Skips are contract-meaningful here (wheel-lane, fixture-lane): always show them.
+addopts = "-ra"

@@ -116,7 +116,9 @@ holds end to end.
 | `internal/adapter` | **test-only** reference settlement consumer (recompute path in replay tests) |
 | `internal/idempotency` | dispatch-edge key reservation store (in-memory + durable file-backed) |
 | `internal/gate` | the authorization engine + §12 acceptance tests |
-| `cmd/server` | HTTP shell: `POST /v2/intents`, `GET /v2/events`, `GET /v2/intents/{id}/events`, `GET /healthz`; state under `TIC_DATA_DIR` |
+| `cmd/server` | HTTP shell: `POST /v2/intents`, `GET /v2/events`, `GET /v2/intents/{id}/events`, `GET /healthz`; state under `TIC_DATA_DIR`; live scorer from `TIC_SCORER_URL` (unset = refuse everything) |
+| `scorer/` | the Python resolver+scorer service (`POST /ml/evaluate`, FastAPI) — see `scorer/README.md` |
+| `contract/scorer/` | golden wire fixtures — the byte-level seam both sides test against |
 
 `CONTRACT.md` (slice 1), amended by `CONTRACT-DURABILITY.md` (durability +
 emit-and-observe deltas) and `CONTRACT-SCORER.md` (the `/ml/evaluate` wire seam),
@@ -132,13 +134,24 @@ go test ./... -count=1
 go test ./... -count=1 -race   # needs cgo; on a Windows host without a C compiler, run via WSL
 ```
 
+The Python scorer has its own gate (see `scorer/README.md`):
+
+```bash
+cd scorer && .venv/Scripts/python -m pytest   # unit + service matrix + wire fixtures
+```
+
 ## Status
 
-**Built and verified** — slice 1 plus the durability + emit-and-observe refactor.
-The gate stops at appending `ACHIEVED`; settlement happens only in a consumer
-observing the durable feed (test-only reference consumer in-repo). The criterion
-scorer (`/ml/evaluate`) is a real interface exercised by in-package fakes; its
-wire seam is **contract-complete** (`CONTRACT-SCORER.md`) with the implementation
-planned — the production scorer (Python) and the settlement consumer
-(COMPASS/TypeScript) are separate slices, as is the ATLAS `IntentSpec` artifact
-type that publishes the criteria this gate consumes.
+**Built and verified** — slice 1, the durability + emit-and-observe refactor,
+and the live scoring seam. The gate stops at appending `ACHIEVED`; settlement
+happens only in a consumer observing the durable feed (test-only reference
+consumer in-repo). The criterion scorer (`/ml/evaluate`) is live end-to-end:
+`cmd/server` selects the shared `HTTPScorer` from `TIC_SCORER_URL` (zero-config
+refuses everything; `force_scores` remains the test affordance), and the Python
+service in `scorer/` answers it per `CONTRACT-SCORER.md`, verified two-process
+with a real service kill. This repo is the **intent layer** — gate, scorer,
+contracts, and wire fixtures together. Still separate: the settlement consumer
+(COMPASS/TypeScript) and the wheel-backed artifact reader inside `scorer/`
+(`ke-artifact-py`, Linux/CI-only — its test lane skips visibly until then);
+the ATLAS `IntentSpec` artifact type that publishes the criteria this gate
+consumes is merged upstream (ADR-0021, canon-5).
