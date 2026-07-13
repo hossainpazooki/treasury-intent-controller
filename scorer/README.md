@@ -38,8 +38,19 @@ overrides). Absent fixtures SKIP visibly — a skip is NOT a pass.
 - **[built]** `EvalRequest`/`EvalResponse` models, evaluator, `StaticFactSource`,
   `NullResolver`, FastAPI app + service fail-closed matrix, wire-fixture
   byte-agreement tests.
-- **[planned — next slice]** the wheel-backed `KeArtifactResolver`
+- **[built — 2026-07-12]** the wheel-backed `KeArtifactResolver`
   (`ke-artifact-py`, Linux/CI only; verify runs in an executor for the GIL
-  caveat). Its pytest lane exists and skips visibly until the wheel is present.
+  caveat). Verifies the governing artifacts by content address against a
+  `.kew` store + the four ATLAS verify inputs; fail-closed on absent hash,
+  rejected verdict, or re-address mismatch. Configure via
+  `TIS_ARTIFACT_DIR` + `TIS_ATLAS_INPUTS_DIR` + `TIS_EXPORTED_AT_UNIX`
+  (all-or-nothing; a partially-configured server refuses to boot). Its pytest
+  lane runs against the real ATLAS goldens on Linux and skips visibly
+  elsewhere. NOTE: green requires the ATLAS R7 kind-aware fix (ADR-0022,
+  regulatory-rule-engine) — before it, no IntentSpec could verify at all.
+- **[recorded debt]** one resolver = ONE verification environment (one
+  policy/context set). Mixed-kind requests (a rule hash + a spec hash from
+  different corpora) fail closed rather than verify both; the fix is a
+  binding-side kind-aware environment, an ATLAS follow-up.
 - **[planned — later slice]** a live fact source. `StaticFactSource` is the
   demo configuration and is labeled as such; do not fake a live one.
