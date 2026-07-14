@@ -17,10 +17,11 @@ model thinks" boundary in view on every turn. Citations plumb the evidence for a
 refute step; they do not perform it - a cited passage still has to actually
 support the claim, so read the quote.
 
-> Status: built and unit-tested (`pytest` 35/35), but the live citation stream
-> has not been exercised against the API yet - it needs a credentialed turn to
-> confirm real replies carry `cited_text` matching the docs. Treat rendering
-> as verified only after that smoke.
+> Status: built, unit-tested (`pytest` 35/35), and **live-verified**
+> (2026-07-14, `scripts/live_smoke.py`): a real turn carried 13 citation
+> deltas, and every `cited_text` was recomputed against the raw bytes of the
+> four contracts - each one a literal substring of the document it names, with
+> no title outside the attached set. The quotes are real, not plausible.
 
 ## Producer≠judge skeptic pass
 
@@ -44,8 +45,15 @@ The producer's framing still asks it to be skeptical — kept as style, no
 longer trusted as duty. Verification is mechanical, in lanes 2–3
 (`skeptic.py`), so the discussion model is never its own citation-police.
 
-> Status: built and unit-tested offline (mocked API); the live three-lane
-> effect is **unverified** — no credentialed run has exercised it.
+> Status: built, unit-tested offline, and **live-verified** (2026-07-14,
+> `scripts/live_smoke.py`): on a real reply the worker extracted 24 claims and
+> the judgment lane returned 24 verdicts (12 supported, 7 unmarked-inference, 4
+> marked-inference, 1 overreach), all arriving after `done`. Crucially the
+> judge is **non-vacuous**: fed planted claims, it refuted a cited claim whose
+> quote does not carry it (→ `overreach`) and a bald uncited assertion (→
+> `unmarked-inference`), while still accepting a self-marked inference (→
+> `marked-inference`). It discriminates - it neither rubber-stamps nor
+> blanket-refutes. The excerpt-only limitation above is unchanged by this.
 
 ## How it works
 
@@ -93,4 +101,15 @@ Open http://localhost:8765. Auth resolves from `ANTHROPIC_API_KEY` or an
 
 ## Test
 
-    python -m pytest -v
+    python -m pytest -v            # 35 offline tests; the API is mocked
+
+Mocks prove the wiring, never the effect. The credentialed probe is separate:
+
+    python scripts/live_smoke.py   # needs a real key; costs tokens
+
+It boots the server, drives two real turns, recomputes every citation quote
+against the raw contract bytes, checks the cached prefix writes then reads, and
+feeds the judgment lane planted claims whose correct verdicts are known - so a
+rubber-stamp judge cannot pass. Last run 2026-07-14: **13/13**. The API's burst
+limit trips easily (three model calls per turn); a `Rate limited` result is an
+environment answer, not evidence about the app - pause and re-run.
