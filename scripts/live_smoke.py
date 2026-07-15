@@ -9,12 +9,14 @@ FAIL a system that merely "streams something plausible":
 - the cached prefix must WRITE on turn 1 and READ on turn 2 (a prefix
   perturbed by a single byte silently re-writes, and that fails here);
 - the judgment lane is fed PLANTED claims whose correct verdicts are known in
-  advance, so a rubber-stamp judge (everything "supported") and a
-  blanket-refuter are both caught -- non-vacuity, not just liveness.
+  advance, in BOTH context modes -- a rubber-stamp judge, a blanket-refuter,
+  AND an excerpt view blind to a doc-inversion trap are all caught or
+  measured.
 
 Costs real tokens: two discussion turns plus both skeptic lanes. The API's
 burst limit is easy to trip; on a `Rate limited` result, pause and re-run --
 that is an environment answer, never evidence about the app.
+Runtime ~6 min (pacing sleeps between fable-5 calls).
 
 Run:  export ANTHROPIC_API_KEY=...   # or an `ant auth login` profile
       python scripts/live_smoke.py
@@ -26,6 +28,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import uvicorn
@@ -51,6 +54,24 @@ def check(name: str, ok: bool, evidence: str) -> None:
     print(f"[{'PASS' if ok else 'FAIL'}] {name}\n        {evidence}\n", flush=True)
 
 
+def report(name: str, evidence: str) -> None:
+    print(f"[REPORT] {name}\n        {evidence}\n", flush=True)
+
+
+class RecordingClient:
+    """Pass-through client that captures usage per call (cost measurement)."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.last_usage = None
+        self.messages = SimpleNamespace(create=self._create)
+
+    def _create(self, **kw):
+        resp = self._inner.messages.create(**kw)
+        self.last_usage = resp.usage
+        return resp
+
+
 def run_turn(client: httpx.Client, messages: list[dict]) -> list[dict]:
     events: list[dict] = []
     with client.stream("POST", "/chat", json={"messages": messages}, timeout=300) as r:
@@ -65,6 +86,10 @@ def main() -> int:
     # exercising so a config swap can never hide behind a green probe.
     print(f"models: discussion={models.resolve('discussion')} "
           f"worker={skeptic.WORKER_MODEL} judgment={skeptic.JUDGMENT_MODEL}\n")
+
+    print(f"judgment_context={skeptic.JUDGMENT_CONTEXT}\n")
+    check("server ships window judgment mode", skeptic.JUDGMENT_CONTEXT == "window",
+          f"config/skeptic.json -> {skeptic.JUDGMENT_CONTEXT}")
 
     cfg = uvicorn.Config(server.app, host="127.0.0.1", port=8799, log_level="error")
     srv = uvicorn.Server(cfg)
@@ -156,15 +181,26 @@ def main() -> int:
         check("turn 2 READ the cached prefix (prefix stayed byte-identical)",
               u2.get("cache_read_input_tokens", 0) > 0, f"usage={u2}")
 
-    # ---- NON-VACUITY of the judgment lane ----------------------------------
-    # A judge that rubber-stamps everything 'supported' would pass every check
-    # above. Plant claims whose correct verdicts are known, and demand the judge
-    # DISCRIMINATE: it must refute the two bad ones and accept the good one.
+    # ---- NON-VACUITY + MODE COMPARISON --------------------------------------
+    # Planted claims with known-correct verdicts, judged in BOTH modes.
+    # c1-c3: the original trio (both modes must get them right).
+    # c4: the doc-inversion trap - a genuine quote whose inverting "no longer "
+    # sits immediately BEFORE it in CONTRACT-DURABILITY.md, outside any
+    # excerpt BY CONSTRUCTION. Window mode must catch it (gated); excerpt
+    # mode's verdict is REPORTED, never gated - if it says overreach it can
+    # only be prior, not evidence, and that is a finding to record.
     real_quote = "Unevaluable"  # replaced below with a genuine doc sentence
     for line in docs["CONTRACT.md"].splitlines():
         if "Unevaluable" in line and len(line) > 40:
             real_quote = line.strip("- *#").strip()
             break
+
+    TRAP_QUOTE = "calls `adapter.OnAchieved` in-process"
+    trap_doc = docs["CONTRACT-DURABILITY.md"]
+    at = trap_doc.find(TRAP_QUOTE)
+    check("trap passage present, negation just outside the excerpt",
+          at > 0 and trap_doc[at - len("no longer "):at] == "no longer ",
+          f"quote at byte {at}; preceding bytes {trap_doc[max(at - 20, 0):at]!r}")
 
     planted = {"claims": [
         {   # (a) cited, but the quote does NOT carry the claim -> overreach
@@ -185,15 +221,63 @@ def main() -> int:
             "status": "uncited",
             "citation": None,
         },
+        {   # (d) THE TRAP: quote genuinely carries the claim locally; the doc
+            #     inverts it two words earlier -> overreach, invisible to excerpts
+            "id": "c4",
+            "claim_text": "The gate calls `adapter.OnAchieved` in-process during authorization.",
+            "status": "cited",
+            "citation": {"title": "CONTRACT-DURABILITY.md", "cited_text": TRAP_QUOTE},
+        },
     ]}
-    verdicts = skeptic.judge_claims(server.get_client(), planted)
-    by_id = {v["id"]: v["verdict"] for v in verdicts}
-    check("judge REFUTES a cited claim its quote does not support (c1 -> overreach)",
-          by_id.get("c1") == "overreach", f"verdicts={by_id}")
-    check("judge REFUTES a bald uncited assertion (c2 -> unmarked-inference)",
-          by_id.get("c2") == "unmarked-inference", f"verdicts={by_id}")
-    check("judge does NOT blanket-refute: a self-marked inference passes (c3 -> marked-inference)",
-          by_id.get("c3") == "marked-inference", f"verdicts={by_id}")
+    planted_reply = " ".join(c["claim_text"] for c in planted["claims"])
+    expected = {"c1": "overreach", "c2": "unmarked-inference", "c3": "marked-inference"}
+
+    rec = RecordingClient(server.get_client())
+
+    time.sleep(60)  # pace: each judgment call is a fresh fable-5 request
+    excerpt_v = {v["id"]: v["verdict"] for v in skeptic.judge_claims(rec, planted, mode="excerpt")}
+    ex_usage = rec.last_usage
+
+    time.sleep(60)
+    window_v = {v["id"]: v["verdict"] for v in skeptic.judge_claims(
+        rec, planted, mode="window", reply_text=planted_reply, docs=docs)}
+    win_usage = rec.last_usage
+
+    for cid, want in expected.items():
+        check(f"excerpt mode: {cid} -> {want}", excerpt_v.get(cid) == want,
+              f"verdicts={excerpt_v}")
+        check(f"window mode (no regression): {cid} -> {want}", window_v.get(cid) == want,
+              f"verdicts={window_v}")
+    check("window mode CATCHES the doc-inversion trap (c4 -> overreach)",
+          window_v.get("c4") == "overreach", f"verdicts={window_v}")
+    report("excerpt mode's verdict on the trap c4 (expected miss: 'supported')",
+           f"{excerpt_v.get('c4')} - the negation is absent from its input; "
+           "a correct verdict here could only be prior, not evidence")
+    report("judgment cost per mode (planted set)",
+           f"excerpt in={ex_usage.input_tokens} out={ex_usage.output_tokens}; "
+           f"window in={win_usage.input_tokens} out={win_usage.output_tokens}")
+
+    # ---- Organic reply, both modes ------------------------------------------
+    # The stream already judged turn 1's claims in the CONFIGURED mode
+    # (window). Re-judge the same claims excerpt-only and report the shift.
+    if claims_ev and verdict_ev:
+        organic = {"claims": claims_ev["claims"]}
+        stream_counts = done_ev["counts"] if done_ev else {}
+        time.sleep(60)
+        organic_ex = skeptic.judge_claims(rec, organic, mode="excerpt")
+        ex_counts: dict[str, int] = {}
+        for v in organic_ex:
+            ex_counts[v["verdict"]] = ex_counts.get(v["verdict"], 0) + 1
+        stream_by_id = {e["id"]: e["verdict"] for e in verdict_ev}
+        missing = [v["id"] for v in organic_ex if v["id"] not in stream_by_id]
+        flipped = sum(
+            1 for v in organic_ex
+            if v["id"] in stream_by_id and stream_by_id[v["id"]] != v["verdict"]
+        )
+        report("organic reply verdict distribution",
+               f"window (stream): {stream_counts}; excerpt (re-judge): {ex_counts}; "
+               f"{flipped}/{len(organic_ex)} verdicts differ between modes"
+               + (f"; {len(missing)} ids missing from stream verdicts" if missing else ""))
 
     failed = [n for ok, n, _ in results if not ok]
     print("=" * 70)

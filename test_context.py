@@ -55,3 +55,17 @@ def test_inject_documents_prepends_and_preserves():
 
 def test_inject_documents_empty_guard():
     assert context.inject_documents([]) == []
+
+
+def test_trap_passage_still_present_in_contract_durability():
+    # scripts/live_smoke.py plants a claim quoting this exact substring; its
+    # known-correct verdict (overreach) depends on the inverting "no longer "
+    # sitting immediately BEFORE the quote - outside any excerpt. If tic's
+    # contract rewords this line, fix the probe's TRAP_QUOTE (backup trap in
+    # the spec: the GlobalSeq/TrajectoryHash "never" sentence).
+    docs = context.load_docs()
+    quote = "calls `adapter.OnAchieved` in-process"
+    doc = docs["CONTRACT-DURABILITY.md"]
+    at = doc.find(quote)
+    assert at > 0, "trap quote vanished from CONTRACT-DURABILITY.md"
+    assert doc[at - len("no longer "):at] == "no longer "
