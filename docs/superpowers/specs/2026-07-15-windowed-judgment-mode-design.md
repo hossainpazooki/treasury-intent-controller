@@ -54,9 +54,19 @@ expensive model exactly the discretion this design withholds).
 
 - New pure function `doc_windows(claims, docs, radius=400) -> dict[str, str]`
   (claim id → window). For each **cited** claim: exact substring search for
-  `cited_text` in the doc named by `title` (the live smoke proved every real
-  citation is a literal substring; first occurrence wins), then ±`radius`
-  chars snapped outward to line boundaries. Uncited claims get no window.
+  `cited_text` in the doc named by `title` (first occurrence wins), then
+  ±`radius` chars snapped outward to line boundaries. Uncited claims get no
+  window.
+  - **Amended 2026-07-15 (live evidence):** the first credentialed run
+    refuted the exact-match-only assumption — the API's citation deltas are
+    byte-exact, but the WORKER lane transcribes quotes and intermittently
+    drifts whitespace, and one drifted quote killed the whole verdict lane
+    (`cited_text not found in 'CONTRACT.md'`; a re-run measured 11/11 exact,
+    so the drift is intermittent). `doc_windows` therefore locates exact
+    first, then falls back to a whitespace-tolerant search (tokens joined by
+    `\s+`, case-sensitive, in order). Fabricated or paraphrased text still
+    finds nothing and still fails loud — the fallback tolerates
+    transcription drift, never fabrication.
 - A cited_text that cannot be located, or a title not in the doc set,
   **raises** `ValueError` → surfaces as `skeptic_error` on the stream
   (fail-loud; skeptic failure still never costs the delivered reply).
