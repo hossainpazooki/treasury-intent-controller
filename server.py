@@ -29,6 +29,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 # Built at import so a missing doc fails the server at startup, loudly.
 SYSTEM = context.FRAMING
 DOCUMENTS = context.build_document_blocks()
+DOCS = context.load_docs()  # raw doc text for the window-mode judge
 
 app = FastAPI()
 
@@ -103,7 +104,13 @@ def skeptic_pass(final_content: list) -> Iterator[str]:
     try:
         claims = skeptic.extract_claims(get_client(), final_content)
         yield sse({"type": "skeptic_claims", "claims": claims["claims"]})
-        verdicts = skeptic.judge_claims(get_client(), claims)
+        verdicts = skeptic.judge_claims(
+            get_client(),
+            claims,
+            mode=skeptic.JUDGMENT_CONTEXT,
+            reply_text=skeptic.render_reply(final_content),
+            docs=DOCS,
+        )
         counts: dict[str, int] = {}
         for v in verdicts:
             counts[v["verdict"]] = counts.get(v["verdict"], 0) + 1

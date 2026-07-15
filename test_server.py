@@ -41,7 +41,7 @@ def _claims():
 def test_skeptic_pass_event_sequence(monkeypatch):
     monkeypatch.setattr(server, "get_client", lambda: object())
     monkeypatch.setattr(server.skeptic, "extract_claims", lambda client, content: _claims())
-    monkeypatch.setattr(server.skeptic, "judge_claims", lambda client, claims: [
+    monkeypatch.setattr(server.skeptic, "judge_claims", lambda client, claims, **kw: [
         {"id": "c1", "verdict": "supported"},
         {"id": "c2", "verdict": "unmarked-inference"},
     ])
@@ -73,7 +73,32 @@ def test_skeptic_pass_no_claims(monkeypatch):
     monkeypatch.setattr(server, "get_client", lambda: object())
     monkeypatch.setattr(server.skeptic, "extract_claims",
                         lambda client, content: {"claims": []})
-    monkeypatch.setattr(server.skeptic, "judge_claims", lambda client, claims: [])
+    monkeypatch.setattr(server.skeptic, "judge_claims", lambda client, claims, **kw: [])
     events = _events(server.skeptic_pass([]))
     assert [e["type"] for e in events] == ["skeptic_claims", "skeptic_done"]
     assert events[-1]["counts"] == {}
+
+
+def test_skeptic_pass_plumbs_mode_reply_and_docs(monkeypatch):
+    # The lane must run the CONFIGURED mode with the rendered reply and the
+    # startup-loaded docs - a server that silently judges excerpt-only while
+    # config says window would be a fail-open verification path.
+    monkeypatch.setattr(server, "get_client", lambda: object())
+    monkeypatch.setattr(server.skeptic, "extract_claims", lambda client, content: _claims())
+    seen = {}
+
+    def fake_judge(client, claims, **kw):
+        seen.update(kw)
+        return [{"id": "c1", "verdict": "supported"},
+                {"id": "c2", "verdict": "unmarked-inference"}]
+
+    monkeypatch.setattr(server.skeptic, "judge_claims", fake_judge)
+    content = [__import__("types").SimpleNamespace(type="text", text="the reply", citations=None)]
+    _events(server.skeptic_pass(content))
+    assert seen["mode"] == server.skeptic.JUDGMENT_CONTEXT
+    assert seen["reply_text"] == server.skeptic.render_reply(content)
+    assert seen["docs"] == server.DOCS
+
+
+def test_docs_loaded_at_import():
+    assert set(server.DOCS) == set(context.DOC_NAMES)
