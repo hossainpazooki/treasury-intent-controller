@@ -3,13 +3,15 @@
 Producer!=judge: the discussion lane's self-skepticism instruction is style,
 not duty - verification lives here. Lane 2 (worker, Sonnet 5) mechanically
 transcribes claim/citation pairs into a forced-tool JSON schema; lane 3
-(judgment, Fable 5) issues per-claim refutation verdicts from the claims JSON
-alone - it never re-reads the ~18K-token docs or the full reply. The smallest
-context goes to the most expensive model; that economy is the point.
+(judgment, Fable 5) issues per-claim refutation verdicts. The judgment lane's
+context is mode-selected (config/skeptic.json): excerpt-only, or windowed
+(reply + mechanical doc passages).
 """
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 from typing import Any
 
 import models
@@ -21,6 +23,33 @@ JUDGMENT_MAX_TOKENS = 4000
 # lane role fails the server at startup - not mid-request as a skeptic_error.
 WORKER_MODEL = models.resolve("worker")
 JUDGMENT_MODEL = models.resolve("judgment")
+
+CONFIG_PATH = Path(__file__).resolve().parent / "config" / "skeptic.json"
+JUDGMENT_CONTEXTS = ("excerpt", "window")
+
+
+def load_judgment_context(path: Path | None = None) -> str:
+    """Judgment-lane context mode from config/skeptic.json, fail-loud.
+
+    Same posture as models.load_config: a missing/malformed config or an
+    unknown mode fails the server at startup, never mid-request."""
+    path = path if path is not None else CONFIG_PATH
+    if not path.is_file():
+        raise FileNotFoundError(f"skeptic config not found: {path}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"skeptic config must be a JSON object: {path}")
+    mode = data.get("judgment_context")
+    if mode not in JUDGMENT_CONTEXTS:
+        raise ValueError(
+            f"judgment_context must be one of {JUDGMENT_CONTEXTS}, got {mode!r}: {path}"
+        )
+    return mode
+
+
+# Resolved at import (server.py imports this module), same reason as the
+# lane models above: bad config fails startup, not a request.
+JUDGMENT_CONTEXT = load_judgment_context()
 
 CLAIM_STATUSES = ("cited", "uncited")
 VERDICTS_BY_STATUS = {
@@ -111,6 +140,20 @@ the source documents.
 
 Claims:"""
 
+JUDGMENT_PROMPT_WINDOW = """\
+You are a skeptic judging claims extracted from a reply about the
+treasury-intent-controller contracts. Record one verdict per claim via the
+record_verdicts tool. Default to refutation. A cited claim is "supported"
+only if its cited_text excerpt carries the claim as stated AND the
+surrounding document passage (DOC CONTEXT below, keyed by claim id) does not
+qualify or negate it - a quote whose neighboring words invert its meaning is
+"overreach". An uncited claim is "marked-inference" only if its own text
+presents itself as inference or opinion - otherwise "unmarked-inference".
+THE REPLY below is the full reply the claims were extracted from; use it to
+resolve referents and whether a claim is actually asserted.
+
+Claims:"""
+
 
 def render_reply(content: list[Any]) -> str:
     """Plain-text rendering of the final message for the worker lane: reply
@@ -125,6 +168,52 @@ def render_reply(content: list[Any]) -> str:
             cited = getattr(c, "cited_text", "") or ""
             parts.append(f'\n[cites {title}: "{cited}"]\n')
     return "".join(parts)
+
+
+WINDOW_RADIUS = 400
+
+
+def _locate(doc: str, quote: str) -> tuple[int, int] | None:
+    """Exact substring first; then a whitespace-tolerant fallback (the worker
+    lane transcribes quotes and may collapse or trim whitespace). Tokens must
+    still match the doc exactly and in order - fabricated or paraphrased text
+    finds nothing and the caller fails loud."""
+    at = doc.find(quote)
+    if at >= 0:
+        return at, at + len(quote)
+    tokens = [re.escape(t) for t in quote.split()]
+    if not tokens:
+        return None
+    m = re.search(r"\s+".join(tokens), doc)
+    return (m.start(), m.end()) if m else None
+
+
+def doc_windows(
+    claims: dict, docs: dict[str, str], radius: int = WINDOW_RADIUS
+) -> dict[str, str]:
+    """Per cited claim, the doc passage surrounding its quote (window mode).
+
+    Mechanical by design: exact match first; whitespace-tolerant fallback for
+    worker-lane transcription drift; first occurrence wins. Then +/- `radius`
+    chars snapped outward to line boundaries. A quote that cannot be located
+    fails loud - it surfaces as skeptic_error, never as a silently windowless
+    judgment."""
+    windows: dict[str, str] = {}
+    for c in claims["claims"]:
+        if c["status"] != "cited":
+            continue
+        title, quote = c["citation"]["title"], c["citation"]["cited_text"]
+        doc = docs.get(title)
+        if doc is None:
+            raise ValueError(f"claim {c['id']!r} cites unknown document {title!r}")
+        span = _locate(doc, quote)
+        if span is None:
+            raise ValueError(f"claim {c['id']!r}: cited_text not found in {title!r}")
+        at, quote_end = span
+        start = doc.rfind("\n", 0, max(at - radius, 0)) + 1
+        end = doc.find("\n", quote_end + radius)
+        windows[c["id"]] = doc[start : end if end >= 0 else len(doc)].strip("\n")
+    return windows
 
 
 def _tool_input(resp: Any, tool_name: str) -> dict:
@@ -196,18 +285,41 @@ def extract_claims(client: Any, content: list[Any]) -> dict:
     return validate_claims(_tool_input(resp, "record_claims"))
 
 
-def judge_claims(client: Any, claims: dict) -> list[dict]:
-    """Lane 3 (judgment): per-claim refutation verdicts from excerpts only."""
+def judge_claims(
+    client: Any,
+    claims: dict,
+    *,
+    mode: str = "excerpt",
+    reply_text: str | None = None,
+    docs: dict[str, str] | None = None,
+) -> list[dict]:
+    """Lane 3 (judgment): per-claim refutation verdicts.
+
+    "excerpt" (the original lane): claims JSON only, byte-identical prompt.
+    "window": claims JSON + the full rendered reply + a mechanical doc
+    window around each quote (doc_windows) - catches context the excerpt
+    provably cannot carry, at a small multiple of the excerpt cost."""
+    if mode not in JUDGMENT_CONTEXTS:
+        raise ValueError(f"unknown judgment context {mode!r}; valid: {JUDGMENT_CONTEXTS}")
     if not claims["claims"]:
         return []
+    if mode == "window":
+        if reply_text is None or docs is None:
+            raise ValueError("window mode requires reply_text and docs")
+        content = (
+            JUDGMENT_PROMPT_WINDOW
+            + "\n\n" + json.dumps(claims["claims"], indent=2)
+            + "\n\nDOC CONTEXT (per cited claim id):\n"
+            + json.dumps(doc_windows(claims, docs), indent=2)
+            + "\n\nTHE REPLY:\n" + reply_text
+        )
+    else:
+        content = JUDGMENT_PROMPT + "\n\n" + json.dumps(claims["claims"], indent=2)
     resp = client.messages.create(
         model=JUDGMENT_MODEL,
         max_tokens=JUDGMENT_MAX_TOKENS,
         tools=[VERDICT_TOOL],
         tool_choice={"type": "tool", "name": "record_verdicts"},
-        messages=[{
-            "role": "user",
-            "content": JUDGMENT_PROMPT + "\n\n" + json.dumps(claims["claims"], indent=2),
-        }],
+        messages=[{"role": "user", "content": content}],
     )
     return validate_verdicts(_tool_input(resp, "record_verdicts"), claims)
