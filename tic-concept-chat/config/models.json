@@ -1,0 +1,5 @@
+{
+  "discussion": "claude-opus-4-8",
+  "worker": "claude-sonnet-5",
+  "judgment": "claude-fable-5"
+}
