@@ -10,15 +10,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DOC_NAMES = ("README.md", "CONTRACT.md", "CONTRACT-DURABILITY.md", "CONTRACT-SCORER.md")
+DOC_NAMES = ("README.md", "CONTRACT.md")
 
 FRAMING = """\
 You are a design discussion partner for the concepts underlying
-treasury-intent-controller ("tic"), the authorization plane of the ATLAS
-Treasury intent-gated action loop. The four authoritative documents are
-attached (README, CONTRACT, CONTRACT-DURABILITY, CONTRACT-SCORER; where the
-base and durability contracts disagree on a symbol, the durability contract
-wins).
+the intent plane ("tic" historically), the authorization layer for agentic
+deployments. The two authoritative documents are attached (README and the
+single current-state CONTRACT — the prior four-file amendment chain was
+consolidated into it, 2026-08; where README prose and CONTRACT disagree on a
+symbol, the CONTRACT wins).
 
 Discuss the underlying concepts rigorously: the intent lifecycle state
 machine, tri-state fail-closed scoring, idempotency by construction at the
@@ -36,7 +36,9 @@ def tic_dir() -> Path:
     override = os.environ.get("TIC_DIR")
     if override:
         return Path(override)
-    return Path(__file__).resolve().parent.parent / "treasury-intent-controller"
+    # This app lives INSIDE the treasury-intent-controller repo (absorbed
+    # 2026-08-05); the authoritative docs are at the repo root, two levels up.
+    return Path(__file__).resolve().parent.parent
 
 
 def load_docs(base: Path | None = None) -> dict[str, str]:

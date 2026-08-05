@@ -113,13 +113,13 @@ Open http://localhost:8765. Auth resolves from `ANTHROPIC_API_KEY` or an
   injected server-side, so the browser never carries the full four-document
   context. The prefix is prompt-cached; the usage line under each reply shows
   cache write/read tokens (expect a write on turn 1, reads after).
-- Docs are read from `../treasury-intent-controller` at startup (override
+- Docs are read from the enclosing repo root (`..`) at startup (override
   with `TIC_DIR`); the server refuses to start if any doc is missing.
 - Model choice is config-centralized (rigor's tier discipline, flattened to
   role -> model): `config/models.json` is the only place a model id lives, and
   a sync test fails if a role is referenced in code but missing from config,
   or sits in config with no code path dispatching it.
-- Design spec: `../treasury-intent-controller/docs/2026-07-05-tic-concept-chat-design.md`
+- Design spec: `../docs/2026-07-05-tic-concept-chat-design.md`
 
 ## Test
 

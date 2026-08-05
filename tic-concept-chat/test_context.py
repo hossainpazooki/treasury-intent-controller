@@ -35,7 +35,7 @@ def test_document_blocks_shape():
     cached = [b for b in blocks if "cache_control" in b]
     assert cached == [blocks[-1]]
     assert blocks[-1]["cache_control"] == {"type": "ephemeral"}
-    assert blocks[-1]["title"] == "CONTRACT-SCORER.md"
+    assert blocks[-1]["title"] == "CONTRACT.md"
 
 
 def test_inject_documents_prepends_and_preserves():
@@ -49,7 +49,7 @@ def test_inject_documents_prepends_and_preserves():
     assert isinstance(content, list)
     assert len(content) == len(context.DOC_NAMES) + 1
     assert all(b["type"] == "document" for b in content[:-1])
-    assert content[-2]["title"] == "CONTRACT-SCORER.md"  # last doc, then the question
+    assert content[-2]["title"] == "CONTRACT.md"  # last doc, then the question
     assert content[-1] == {"type": "text", "text": "hi"}
 
 
@@ -57,15 +57,16 @@ def test_inject_documents_empty_guard():
     assert context.inject_documents([]) == []
 
 
-def test_trap_passage_still_present_in_contract_durability():
+def test_trap_passage_still_present_in_contract():
     # scripts/live_smoke.py plants a claim quoting this exact substring; its
-    # known-correct verdict (overreach) depends on the inverting "no longer "
-    # sitting immediately BEFORE the quote - outside any excerpt. If tic's
-    # contract rewords this line, fix the probe's TRAP_QUOTE (backup trap in
-    # the spec: the GlobalSeq/TrajectoryHash "never" sentence).
+    # known-correct verdict (overreach) depends on the inverting "never "
+    # sitting immediately BEFORE the quote - outside any excerpt. (This is the
+    # spec's backup trap; the original adapter.OnAchieved sentence did not
+    # survive the 2026-08 contract consolidation verbatim.) If the contract
+    # rewords this line, fix the probe's TRAP_QUOTE.
     docs = context.load_docs()
-    quote = "calls `adapter.OnAchieved` in-process"
-    doc = docs["CONTRACT-DURABILITY.md"]
+    quote = "enters the per-intent `TrajectoryHash`"
+    doc = docs["CONTRACT.md"]
     at = doc.find(quote)
-    assert at > 0, "trap quote vanished from CONTRACT-DURABILITY.md"
-    assert doc[at - len("no longer "):at] == "no longer "
+    assert at > 0, "trap quote vanished from CONTRACT.md"
+    assert doc[at - len("never "):at] == "never "

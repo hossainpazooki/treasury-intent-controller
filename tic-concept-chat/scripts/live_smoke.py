@@ -184,8 +184,8 @@ def main() -> int:
     # ---- NON-VACUITY + MODE COMPARISON --------------------------------------
     # Planted claims with known-correct verdicts, judged in BOTH modes.
     # c1-c3: the original trio (both modes must get them right).
-    # c4: the doc-inversion trap - a genuine quote whose inverting "no longer "
-    # sits immediately BEFORE it in CONTRACT-DURABILITY.md, outside any
+    # c4: the doc-inversion trap - a genuine quote whose inverting "never "
+    # sits immediately BEFORE it in CONTRACT.md, outside any
     # excerpt BY CONSTRUCTION. Window mode must catch it (gated); excerpt
     # mode's verdict is REPORTED, never gated - if it says overreach it can
     # only be prior, not evidence, and that is a finding to record.
@@ -195,11 +195,11 @@ def main() -> int:
             real_quote = line.strip("- *#").strip()
             break
 
-    TRAP_QUOTE = "calls `adapter.OnAchieved` in-process"
-    trap_doc = docs["CONTRACT-DURABILITY.md"]
+    TRAP_QUOTE = "enters the per-intent `TrajectoryHash`"
+    trap_doc = docs["CONTRACT.md"]
     at = trap_doc.find(TRAP_QUOTE)
     check("trap passage present, negation just outside the excerpt",
-          at > 0 and trap_doc[at - len("no longer "):at] == "no longer ",
+          at > 0 and trap_doc[at - len("never "):at] == "never ",
           f"quote at byte {at}; preceding bytes {trap_doc[max(at - 20, 0):at]!r}")
 
     planted = {"claims": [
@@ -226,7 +226,7 @@ def main() -> int:
             "id": "c4",
             "claim_text": "The gate calls `adapter.OnAchieved` in-process during authorization.",
             "status": "cited",
-            "citation": {"title": "CONTRACT-DURABILITY.md", "cited_text": TRAP_QUOTE},
+            "citation": {"title": "CONTRACT.md", "cited_text": TRAP_QUOTE},
         },
     ]}
     planted_reply = " ".join(c["claim_text"] for c in planted["claims"])
