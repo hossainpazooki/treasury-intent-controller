@@ -99,8 +99,8 @@ A near-duplicate — same key, one changed field, hence a *different* intent has
 the settlement log by construction, not by assertion. The amber nodes below are the
 gate's checkpoints — the two idempotency checks flanking the spec-shape
 check; the key's governance as a signed, expert-attested criterion
-lives in the upstream ATLAS `IntentSpec` artifact — this gate consumes and
-enforces it.
+lives in the attested spec payload (`CONTRACT.md` §2.6, per ADR-0007) — this
+gate consumes and enforces it.
 
 ```mermaid
 flowchart TD
@@ -318,11 +318,16 @@ consumer in-repo). The criterion scorer (`/ml/evaluate`) is live end-to-end:
 `core/cmd/server` selects the shared `HTTPScorer` from `INTENT_SCORER_URL`
 (zero-config refuses everything; `force_scores` remains the test affordance),
 and the Python service in `core/scorer/` answers it per `CONTRACT.md` §8,
-verified two-process with a real service kill. This repo is the **intent
-plane** — gate, scorer, contract, wire fixtures, and the treasury
-demonstration together. Still separate: the settlement consumer
+verified two-process with a real service kill. This repo is the **testing
+monorepo** for the intent plane: the full stack — gate, scorer, contract,
+wire fixtures, the treasury application seats and demonstration, and the
+concept-discussion chat (`tic-concept-chat/`) — lives and evolves here; the
+published minimal SDK (core + plane only) is `github.com/hossainpazooki/intent-plane`,
+and core changes are ported there once they settle. Still separate: the settlement consumer
 (COMPASS/TypeScript) and the wheel-backed artifact reader inside `core/scorer/`
 (`ke-artifact-py` — built and live-verified 2026-07-12, but Linux/CI-only:
 its test lane skips visibly on hosts without the wheel);
-the ATLAS `IntentSpec` artifact type that publishes the criteria this gate
-consumes is merged upstream (ADR-0021, canon-5).
+the ATLAS `IntentSpec` artifact type is merged upstream (ADR-0021, canon-5)
+but is RETIRED as a criteria source (ADR-0007): criteria reach this gate only
+through §2.6 spec resolution; `rule_artifact_hash` keeps pointing at the
+upstream rule artifact as provenance.
