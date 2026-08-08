@@ -3,7 +3,7 @@ package adapter
 import (
 	"testing"
 
-	"github.com/pazooki/intent-plane/core/internal/intent"
+	"github.com/hossainpazooki/intent-plane/core/internal/intent"
 )
 
 func mkIntent(seed, key string) intent.Intent {

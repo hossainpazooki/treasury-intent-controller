@@ -13,12 +13,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pazooki/intent-plane/core/internal/audit"
-	"github.com/pazooki/intent-plane/core/internal/durable"
-	"github.com/pazooki/intent-plane/core/internal/idempotency"
-	"github.com/pazooki/intent-plane/core/internal/intent"
-	"github.com/pazooki/intent-plane/core/internal/lifecycle"
-	"github.com/pazooki/intent-plane/core/internal/scoring"
+	"github.com/hossainpazooki/intent-plane/core/internal/audit"
+	"github.com/hossainpazooki/intent-plane/core/internal/durable"
+	"github.com/hossainpazooki/intent-plane/core/internal/idempotency"
+	"github.com/hossainpazooki/intent-plane/core/internal/intent"
+	"github.com/hossainpazooki/intent-plane/core/internal/lifecycle"
+	"github.com/hossainpazooki/intent-plane/core/internal/scoring"
 )
 
 // Result is the terminal outcome of one authorization. Settlement is REMOVED

@@ -45,12 +45,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pazooki/intent-plane/core/internal/durable"
-	"github.com/pazooki/intent-plane/core/internal/gate"
-	"github.com/pazooki/intent-plane/core/internal/idempotency"
-	"github.com/pazooki/intent-plane/core/internal/intent"
-	"github.com/pazooki/intent-plane/core/internal/scoring"
-	"github.com/pazooki/intent-plane/plane"
+	"github.com/hossainpazooki/intent-plane/core/internal/durable"
+	"github.com/hossainpazooki/intent-plane/core/internal/gate"
+	"github.com/hossainpazooki/intent-plane/core/internal/idempotency"
+	"github.com/hossainpazooki/intent-plane/core/internal/intent"
+	"github.com/hossainpazooki/intent-plane/core/internal/scoring"
+	"github.com/hossainpazooki/intent-plane/plane"
 )
 
 // --- request / response DTOs (snake_case JSON, decoupled from internal types) ---

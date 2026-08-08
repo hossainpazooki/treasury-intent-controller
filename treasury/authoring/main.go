@@ -42,7 +42,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/pazooki/intent-plane/plane"
+	"github.com/hossainpazooki/intent-plane/plane"
 )
 
 type criterionSrc struct {

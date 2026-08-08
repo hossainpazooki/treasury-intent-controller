@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/pazooki/intent-plane/core/internal/intent"
+	"github.com/hossainpazooki/intent-plane/core/internal/intent"
 )
 
 // DefaultTimeout bounds one /ml/evaluate call. A slower scorer is Unevaluable

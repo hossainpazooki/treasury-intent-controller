@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/pazooki/intent-plane/core/internal/intent"
+	"github.com/hossainpazooki/intent-plane/core/internal/intent"
 )
 
 // reservation is one durable JSONL line: {"key":..,"id":..}.

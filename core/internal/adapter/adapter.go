@@ -9,7 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
-	"github.com/pazooki/intent-plane/core/internal/intent"
+	"github.com/hossainpazooki/intent-plane/core/internal/intent"
 )
 
 // SettlementEvent is what the adapter records on ACHIEVED. Deterministic from the

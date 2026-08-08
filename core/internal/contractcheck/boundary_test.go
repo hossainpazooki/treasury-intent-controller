@@ -28,7 +28,7 @@ import (
 	"testing"
 )
 
-const modulePrefix = "github.com/pazooki/intent-plane/"
+const modulePrefix = "github.com/hossainpazooki/intent-plane/"
 
 // allowedProd pins the production (non-_test.go) import adjacency of the CORE,
 // intra-module edges only. Keys are the complete set of core Go package

@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/pazooki/intent-plane/plane"
+	"github.com/hossainpazooki/intent-plane/plane"
 )
 
 // testKeyFile is a TEST-LOCAL signing seat: the plane is verification-only

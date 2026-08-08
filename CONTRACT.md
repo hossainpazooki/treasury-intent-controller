@@ -5,7 +5,7 @@ THIS document, not against other code. Do not change any exported name,
 signature, package path, wire key, route, or normative rule fixed here without
 amending this document FIRST.
 
-- Module path: `github.com/pazooki/intent-plane`. Go 1.26.
+- Module path: `github.com/hossainpazooki/intent-plane`. Go 1.26.
 - **Go side: stdlib only — no external dependencies, no new modules.** The
   stdlib-only rule does NOT extend to the Python scorer service (§8).
 - No network in any unit test; all test IO under `t.TempDir()`.
@@ -601,12 +601,12 @@ package gate // core/internal/gate
 import (
 	"context"
 
-	"github.com/pazooki/intent-plane/core/internal/audit"
-	"github.com/pazooki/intent-plane/core/internal/durable"
-	"github.com/pazooki/intent-plane/core/internal/idempotency"
-	"github.com/pazooki/intent-plane/core/internal/intent"
-	"github.com/pazooki/intent-plane/core/internal/lifecycle"
-	"github.com/pazooki/intent-plane/core/internal/scoring"
+	"github.com/hossainpazooki/intent-plane/core/internal/audit"
+	"github.com/hossainpazooki/intent-plane/core/internal/durable"
+	"github.com/hossainpazooki/intent-plane/core/internal/idempotency"
+	"github.com/hossainpazooki/intent-plane/core/internal/intent"
+	"github.com/hossainpazooki/intent-plane/core/internal/lifecycle"
+	"github.com/hossainpazooki/intent-plane/core/internal/scoring"
 	// NOTE: core/internal/adapter is NOT imported here (emit-and-observe).
 )
 
@@ -1309,8 +1309,8 @@ substitutes for it.
 **Amendments folded in by the 2026-08-03 repositioning**, applied throughout
 above rather than annotated inline:
 
-- Module path `github.com/pazooki/treasury-intent-controller` →
-  `github.com/pazooki/intent-plane`.
+- Module path `github.com/hossainpazooki/treasury-intent-controller` →
+  `github.com/hossainpazooki/intent-plane`.
 - Go tree moved under `core/`: `cmd/server` → `core/cmd/server`, `internal/...`
   → `core/internal/...`, `contract/scorer` → `core/contract/scorer`.
 - Gate env `TIC_DATA_DIR`/`TIC_SCORER_URL`/`TIC_ADDR` →

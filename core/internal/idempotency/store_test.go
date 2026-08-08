@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-import "github.com/pazooki/intent-plane/core/internal/intent"
+import "github.com/hossainpazooki/intent-plane/core/internal/intent"
 
 func TestReserveFreshKey(t *testing.T) {
 	s := NewStore()

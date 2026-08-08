@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pazooki/intent-plane/core/internal/intent"
+	"github.com/hossainpazooki/intent-plane/core/internal/intent"
 )
 
 func testIntent() intent.Intent {

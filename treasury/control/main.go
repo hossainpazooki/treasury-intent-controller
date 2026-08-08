@@ -26,8 +26,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/pazooki/intent-plane/plane"
-	"github.com/pazooki/intent-plane/treasury/authority"
+	"github.com/hossainpazooki/intent-plane/plane"
+	"github.com/hossainpazooki/intent-plane/treasury/authority"
 )
 
 func fail(err error) {

@@ -20,13 +20,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pazooki/intent-plane/core/internal/adapter"
-	"github.com/pazooki/intent-plane/core/internal/audit"
-	"github.com/pazooki/intent-plane/core/internal/durable"
-	"github.com/pazooki/intent-plane/core/internal/idempotency"
-	"github.com/pazooki/intent-plane/core/internal/intent"
-	"github.com/pazooki/intent-plane/core/internal/lifecycle"
-	"github.com/pazooki/intent-plane/core/internal/scoring"
+	"github.com/hossainpazooki/intent-plane/core/internal/adapter"
+	"github.com/hossainpazooki/intent-plane/core/internal/audit"
+	"github.com/hossainpazooki/intent-plane/core/internal/durable"
+	"github.com/hossainpazooki/intent-plane/core/internal/idempotency"
+	"github.com/hossainpazooki/intent-plane/core/internal/intent"
+	"github.com/hossainpazooki/intent-plane/core/internal/lifecycle"
+	"github.com/hossainpazooki/intent-plane/core/internal/scoring"
 )
 
 // --- helpers ---------------------------------------------------------------

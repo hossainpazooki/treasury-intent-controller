@@ -1,3 +1,3 @@
-module github.com/pazooki/intent-plane
+module github.com/hossainpazooki/intent-plane
 
 go 1.26

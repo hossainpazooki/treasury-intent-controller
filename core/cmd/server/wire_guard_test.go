@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pazooki/intent-plane/core/internal/durable"
-	"github.com/pazooki/intent-plane/core/internal/idempotency"
-	"github.com/pazooki/intent-plane/plane"
+	"github.com/hossainpazooki/intent-plane/core/internal/durable"
+	"github.com/hossainpazooki/intent-plane/core/internal/idempotency"
+	"github.com/hossainpazooki/intent-plane/plane"
 )
 
 // Old wire shape: criteria nested under spec. CONTRACT.md §2.2 claims

@@ -8,11 +8,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pazooki/intent-plane/core/internal/durable"
-	"github.com/pazooki/intent-plane/core/internal/idempotency"
-	"github.com/pazooki/intent-plane/core/internal/intent"
-	"github.com/pazooki/intent-plane/core/internal/lifecycle"
-	"github.com/pazooki/intent-plane/core/internal/scoring"
+	"github.com/hossainpazooki/intent-plane/core/internal/durable"
+	"github.com/hossainpazooki/intent-plane/core/internal/idempotency"
+	"github.com/hossainpazooki/intent-plane/core/internal/intent"
+	"github.com/hossainpazooki/intent-plane/core/internal/lifecycle"
+	"github.com/hossainpazooki/intent-plane/core/internal/scoring"
 )
 
 // planeScorer is a local test scorer: default Pass, call counting, and an

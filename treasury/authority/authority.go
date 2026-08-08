@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/pazooki/intent-plane/plane"
+	"github.com/hossainpazooki/intent-plane/plane"
 )
 
 // KeyFile is the on-disk shape of a test-authority keypair.
