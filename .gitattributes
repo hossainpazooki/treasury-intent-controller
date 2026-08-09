@@ -1,2 +1,6 @@
 # WSL runs treasury/quickstart.sh; a CRLF checkout breaks its #!/bin/sh line.
 *.sh text eol=lf
+# Feed fixtures and their expected reports are frozen BYTES (CONTRACT.md
+# §9.1) byte-compared from both language lanes; eol conversion would tamper
+# with the very thing the tampered-fixture test proves detectable.
+core/contract/feed/* -text

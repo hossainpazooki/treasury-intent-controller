@@ -1,0 +1,8 @@
+intent fb854994e0408042 REFUTED hash-mismatch
+intent ae8a3c8ce2e2fd98 VERIFIED
+intent 791d7be16122ae27 VERIFIED
+intent f40336d4a0dd3cb0 VERIFIED
+intent 79bd54475d38a50b VERIFIED
+intent 57f16447940b9311 VERIFIED
+intent 8ae053b840f2ce5e VERIFIED
+RESULT: REFUTED intents=7 verified=6 refuted=1 unverifiable=0

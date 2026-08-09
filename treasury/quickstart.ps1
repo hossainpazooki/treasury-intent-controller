@@ -39,7 +39,7 @@ try {
     $env:SCORER_PORT = "$scorerPort"
     $scorer = Start-Process -FilePath $venvPy -ArgumentList "-m", "scorer" -WorkingDirectory (Join-Path $repo "core\scorer") -PassThru -WindowStyle Hidden
 
-    Write-Host "[boot] building the gate and the plane role CLIs"
+    Write-Host "[boot] building the gate, the plane role CLIs, and the verifier"
     & go build -o (Join-Path $repo "bin\intent-gate.exe") "$repo\core\cmd\server"
     # A failing NATIVE command does not halt under -File even with
     # ErrorActionPreference=Stop, so a broken build would silently probe the
@@ -48,6 +48,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "go build failed" }
     & go build -o (Join-Path $repo "bin\intent-control.exe") "$repo\treasury\control"
     if ($LASTEXITCODE -ne 0) { throw "go build (control) failed" }
+    & go build -o (Join-Path $repo "bin\intent-verify.exe") "$repo\verifier\cmd\intent-verify"
+    if ($LASTEXITCODE -ne 0) { throw "go build (verifier) failed" }
     $control = Join-Path $repo "bin\intent-control.exe"
 
     # The plane ladder: keygen -> trust root -> attest -> publish. Nothing the
@@ -121,7 +123,21 @@ try {
     else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 1 ACHIEVED, got $($achieved.Count)" }
     Write-Host "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-    Write-Host ("RESULT: {0}/8 probes passed" -f $pass)
+    # Probe 9: the recompute probe (CONTRACT.md 9.1). Both verifier twins
+    # re-derive every commitment - trajectory hashes on grants AND refusals,
+    # sequence contiguity, exactly-one-ACHIEVED - from the record bytes alone,
+    # and their reports must agree line-for-line. A refuting verifier exits
+    # nonzero: that is a probe FAIL, not a script abort.
+    $goReport = & (Join-Path $repo "bin\intent-verify.exe") (Join-Path $dataDir "events.jsonl") | Out-String
+    $goRc = $LASTEXITCODE
+    $pyReport = & $venvPy (Join-Path $repo "verifier\pyverifier\verify.py") (Join-Path $dataDir "events.jsonl") | Out-String
+    $pyRc = $LASTEXITCODE
+    $verdict = ($goReport.TrimEnd() -split "`n")[-1]
+    if ($goRc -eq 0 -and $pyRc -eq 0 -and ($goReport -eq $pyReport)) { $pass++; Write-Host "[PASS] verifier recompute: $verdict (Go and Python reports identical)" }
+    else { $fail++; Write-Host "[FAIL] verifier recompute: goExit=$goRc pyExit=$pyRc identical=$($goReport -eq $pyReport)"; Write-Host $goReport }
+    Write-Host "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
+
+    Write-Host ("RESULT: {0}/9 probes passed" -f $pass)
 }
 finally {
     # Reclaim on EVERY exit path - a Wait-Healthy timeout or a transport throw

@@ -64,9 +64,10 @@ echo "[boot] scorer with treasury facts (balance=250, fx_rate=1.30)"
 SCORER_FACTS_JSON=$(cat "$here/facts.json") SCORER_PORT=$scorer_port "$venv_py" -m scorer &
 scorer_pid=$!
 
-echo "[boot] building the gate and the plane role CLIs"
+echo "[boot] building the gate, the plane role CLIs, and the verifier"
 go build -o "$repo/bin/intent-gate" "$repo/core/cmd/server"
 go build -o "$repo/bin/intent-control" "$repo/treasury/control"
+go build -o "$repo/bin/intent-verify" "$repo/verifier/cmd/intent-verify"
 
 # The plane ladder: keygen -> trust root -> attest -> publish. Nothing the
 # probes declare against exists until the control role's key has signed it;
@@ -139,5 +140,21 @@ achieved=$(curl -fsS "$gate_url/v2/events?since=0" | "$venv_py" -c "import json,
 if [ "$achieved" = "1" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 1 ACHIEVED record"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 1 ACHIEVED, got $achieved"; fi
 echo "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-echo "RESULT: $pass/8 probes passed"
+# Probe 9: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
+# every commitment - trajectory hashes on grants AND refusals, sequence
+# contiguity, exactly-one-ACHIEVED - from the record bytes alone, and their
+# reports must be byte-identical. `set -e` is suspended around the calls: a
+# refuting verifier exits nonzero, and that is a probe FAIL, not a script abort.
+go_rc=0; go_report=$("$repo/bin/intent-verify" "$data_dir/events.jsonl") || go_rc=$?
+py_rc=0; py_report=$("$venv_py" "$repo/verifier/pyverifier/verify.py" "$data_dir/events.jsonl") || py_rc=$?
+verdict=$(printf '%s\n' "$go_report" | tail -1)
+if [ "$go_rc" -eq 0 ] && [ "$py_rc" -eq 0 ] && [ "$go_report" = "$py_report" ]; then
+    pass=$((pass + 1)); echo "[PASS] verifier recompute: $verdict (Go and Python reports identical)"
+else
+    fail=$((fail + 1)); echo "[FAIL] verifier recompute: goExit=$go_rc pyExit=$py_rc"
+    printf '%s\n' "$go_report" | tail -3
+fi
+echo "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
+
+echo "RESULT: $pass/9 probes passed"
 [ "$fail" -eq 0 ]

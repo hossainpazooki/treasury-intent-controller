@@ -163,6 +163,33 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 		return emit(string(to), detail)
 	}
 
+	// emitFinal appends the intent's LAST event and stamps the TrajectoryHash —
+	// computed over the complete log INCLUDING this event — on the mirrored
+	// record (CONTRACT.md §2.3 refusal-hash commitment): every completed
+	// authorization commits durably to its own trajectory, refusals included.
+	emitFinal := func(typ, detail string) error {
+		e := log.Append(typ, detail)
+		_, err := g.feed.Append(durable.Record{
+			IntentID:       id,
+			IntentSeq:      e.Seq,
+			Type:           e.Type,
+			Detail:         e.Detail,
+			TrajectoryHash: log.TrajectoryHash(),
+		})
+		return err
+	}
+
+	// transitionFinal is transition for terminal states (FAILED /
+	// FAILED_AT_DISPATCH): the transition record is the intent's
+	// terminal-position record, so it carries the hash.
+	transitionFinal := func(to lifecycle.State, detail string) error {
+		if !lifecycle.IsValidTransition(state, to) {
+			return fmt.Errorf("gate: invalid lifecycle transition %s -> %s", state, to)
+		}
+		state = to
+		return emitFinal(string(to), detail)
+	}
+
 	terminal := func(term lifecycle.State, reason string) Result {
 		return Result{
 			Terminal:       term,
@@ -181,7 +208,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 		return partial(), err
 	}
 	if i.IdempotencyKey == "" {
-		if err := emit("UNEVALUABLE", "absent-key"); err != nil {
+		if err := emitFinal("UNEVALUABLE", "absent-key"); err != nil {
 			return partial(), err
 		}
 		return terminal(lifecycle.Failed, "unevaluable:absent-key"), nil
@@ -195,7 +222,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 	// bug found by end-to-end smoke; pinned by
 	// TestRevokedResolutionWinsOverUnattested.)
 	if ref := i.Resolution.RevokedRef; ref != "" {
-		if err := emit("REVOKED", ref); err != nil {
+		if err := emitFinal("REVOKED", ref); err != nil {
 			return partial(), err
 		}
 		return terminal(lifecycle.Failed, "revoked:"+ref), nil
@@ -208,7 +235,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 	// criteria that did not arrive through signature verification and
 	// content-address equality never reach the scorer.
 	if !i.Resolution.Attested {
-		if err := emit("UNEVALUABLE", "unattested-spec:"+i.IntentSpecHash); err != nil {
+		if err := emitFinal("UNEVALUABLE", "unattested-spec:"+i.IntentSpecHash); err != nil {
 			return partial(), err
 		}
 		return terminal(lifecycle.Failed, "unevaluable:unattested-spec"), nil
@@ -216,7 +243,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 	// Step 1a3b: revocation at declaration via the live checker (the resolver
 	// path is step 1a2 above; this consults the signal directly).
 	if ref, ok := g.revokedRef(i.IntentSpecHash); ok {
-		if err := emit("REVOKED", ref); err != nil {
+		if err := emitFinal("REVOKED", ref); err != nil {
 			return partial(), err
 		}
 		return terminal(lifecycle.Failed, "revoked:"+ref), nil
@@ -226,7 +253,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 	// refuses — the zero value never silently becomes "enforce" (a posture
 	// default would be a config toggle wearing a trench coat).
 	if i.Spec.Posture != intent.PostureEnforce && i.Spec.Posture != intent.PostureShadow {
-		if err := emit("UNEVALUABLE", "invalid-posture:"+string(i.Spec.Posture)); err != nil {
+		if err := emitFinal("UNEVALUABLE", "invalid-posture:"+string(i.Spec.Posture)); err != nil {
 			return partial(), err
 		}
 		return terminal(lifecycle.Failed, "unevaluable:invalid-posture"), nil
@@ -238,7 +265,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 	// is a SUCCESS state of the plane (P6), not a coverage gap.
 	if len(i.Spec.HumanJudgment) > 0 {
 		name := i.Spec.HumanJudgment[0]
-		if err := emit("UNEVALUABLE", "human-judgment:"+name); err != nil {
+		if err := emitFinal("UNEVALUABLE", "human-judgment:"+name); err != nil {
 			return partial(), err
 		}
 		return terminal(lifecycle.Failed, "unevaluable:human-judgment:"+name), nil
@@ -254,7 +281,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 	// signed spec was thin; a blank hash yields the bare "empty-criteria:",
 	// witnessing that none was claimed.
 	if len(i.Spec.Criteria) == 0 {
-		if err := emit("UNEVALUABLE", "empty-criteria:"+i.IntentSpecHash); err != nil {
+		if err := emitFinal("UNEVALUABLE", "empty-criteria:"+i.IntentSpecHash); err != nil {
 			return partial(), err
 		}
 		return terminal(lifecycle.Failed, "unevaluable:empty-criteria"), nil
@@ -266,7 +293,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 	// reveal.
 	for _, c := range i.Spec.Criteria {
 		if c.Volatility != intent.Stable && c.Volatility != intent.Volatile {
-			if err := emit("UNEVALUABLE", "invalid-volatility:"+c.Name+":"+string(c.Volatility)); err != nil {
+			if err := emitFinal("UNEVALUABLE", "invalid-volatility:"+c.Name+":"+string(c.Volatility)); err != nil {
 				return partial(), err
 			}
 			return terminal(lifecycle.Failed, "unevaluable:invalid-volatility:"+c.Name), nil
@@ -305,7 +332,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 			if err := emit("UNEVALUABLE", c.Name); err != nil {
 				return partial(), err
 			}
-			if err := transition(lifecycle.Failed, reason); err != nil {
+			if err := transitionFinal(lifecycle.Failed, reason); err != nil {
 				return partial(), err
 			}
 			return terminal(lifecycle.Failed, reason), nil
@@ -313,7 +340,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 	}
 	if len(failed) > 0 {
 		reason := strings.Join(failed, ",")
-		if err := transition(lifecycle.Failed, reason); err != nil {
+		if err := transitionFinal(lifecycle.Failed, reason); err != nil {
 			return partial(), err
 		}
 		return terminal(lifecycle.Failed, reason), nil
@@ -339,7 +366,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 			}
 		}
 		reason := "volatile-recheck:" + c.Name
-		if err := transition(lifecycle.FailedAtDispatch, reason); err != nil {
+		if err := transitionFinal(lifecycle.FailedAtDispatch, reason); err != nil {
 			return partial(), err
 		}
 		return terminal(lifecycle.FailedAtDispatch, reason), nil
@@ -356,7 +383,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 		if err := emit("REVOKED", ref); err != nil {
 			return partial(), err
 		}
-		if err := transition(lifecycle.FailedAtDispatch, reason); err != nil {
+		if err := transitionFinal(lifecycle.FailedAtDispatch, reason); err != nil {
 			return partial(), err
 		}
 		return terminal(lifecycle.FailedAtDispatch, reason), nil
@@ -397,7 +424,7 @@ func (g *Gate) Authorize(ctx context.Context, i intent.Intent) (Result, error) {
 	// Step 4b: idempotency reserve at the dispatch edge.
 	if !g.store.Reserve(id, i.IdempotencyKey) {
 		reason := "idempotency-collision"
-		if err := transition(lifecycle.FailedAtDispatch, reason); err != nil {
+		if err := transitionFinal(lifecycle.FailedAtDispatch, reason); err != nil {
 			return partial(), err
 		}
 		return terminal(lifecycle.FailedAtDispatch, reason), nil

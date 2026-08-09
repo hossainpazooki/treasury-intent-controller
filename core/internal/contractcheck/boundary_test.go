@@ -187,16 +187,23 @@ func sorted(set map[string]bool) []string {
 // package SET and its import adjacency match CONTRACT.md §7 exactly.
 // Application trees: pinned by rule — an application package may import only
 // the plane artifact and packages within its OWN tree; nothing in the core
-// may import an application package, in production OR test code.
+// may import an application package, in production OR test code. The
+// verifier tree: stricter than an application — it imports nothing from the
+// module outside its own tree, not even the plane artifact (§7.1: the
+// examiner's independence is structural, and "verifier" is §1.1 role
+// vocabulary, not application vocabulary).
 func TestImportBoundary(t *testing.T) {
 	root := repoRoot(t)
 	dirs := goPackageDirs(t, root)
 
-	var coreDirs, appDirs []string
+	var coreDirs, appDirs, verifierDirs []string
 	for _, d := range dirs {
-		if isCoreDir(d) {
+		switch {
+		case isCoreDir(d):
 			coreDirs = append(coreDirs, d)
-		} else {
+		case appTree(d) == "verifier":
+			verifierDirs = append(verifierDirs, d)
+		default:
 			appDirs = append(appDirs, d)
 		}
 	}
@@ -246,6 +253,22 @@ func TestImportBoundary(t *testing.T) {
 			}
 			if !wantProd[p] && !wantTest[p] {
 				t.Errorf("%s: unsanctioned TEST-ONLY import edge -> %s", d, p)
+			}
+		}
+	}
+
+	// The verifier tree (§7.1): the independent examiner re-derives the feed's
+	// commitments WITHOUT running the gate's code, so it imports nothing from
+	// the module outside its own tree — not core, not plane, not an
+	// application tree — in production OR test code.
+	for _, d := range verifierDirs {
+		prod, testOnly := intraModuleImports(t, root, d)
+		for _, set := range []map[string]bool{prod, testOnly} {
+			for p := range set {
+				if p == d || appTree(p) == "verifier" {
+					continue
+				}
+				t.Errorf("%s: verifier package imports %q — the verifier imports nothing from the module outside its own tree (§7.1)", d, p)
 			}
 		}
 	}

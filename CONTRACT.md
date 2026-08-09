@@ -24,7 +24,7 @@ the plane, not part of it.
 
 ### §1.1 Actor roles
 
-Four roles, and only these, for actors in normative text:
+Five roles, and only these, for actors in normative text:
 
 | Role | Meaning |
 |---|---|
@@ -32,6 +32,7 @@ Four roles, and only these, for actors in normative text:
 | **author** | the drafting function (authoring plane); proposes IntentSpecs, holds no keys, cannot sign/publish/activate |
 | **attester** | the human author of record; what they sign is what the gate is meant to execute |
 | **gate** | this repo's deterministic core; sole ACHIEVED authority |
+| **verifier** | the independent ex-post examiner (audit, model risk, a counterparty) that re-derives the record from the feed WITHOUT trusting the gate; its seat is the `verifier/` tree, which imports nothing from this module (§7.1) |
 
 Pre-existing non-actor senses (HTTP "client", Go-doc "caller", build-meta
 "agent"/"owner") stay as they are — they denote no actor role. Mechanically
@@ -226,9 +227,11 @@ package durable // core/internal/durable
 // Record is one durable, append-only event line (JSONL). Field order below IS the
 // on-wire and on-disk order. GlobalSeq (json "seq") is monotonic across ALL
 // intents; IntentSeq (json "intent_seq") is the per-intent logical clock, copied
-// UNCHANGED from audit.Event.Seq. The four trace fields are populated ONLY on the
-// ACHIEVED record (omitted otherwise). "seq" is always >=1; "intent_seq" may be 0
-// (the DECLARED event), so it is NOT omitempty.
+// UNCHANGED from audit.Event.Seq. The three provenance fields ride ONLY on
+// SHADOW_RECORDED + ACHIEVED; trajectory_hash rides on the TERMINAL-POSITION
+// record of every completed authorization (refusal-hash commitment, below).
+// "seq" is always >=1; "intent_seq" may be 0 (the DECLARED event), so it is
+// NOT omitempty.
 type Record struct {
 	GlobalSeq        int    `json:"seq"`
 	IntentSeq        int    `json:"intent_seq"`
@@ -239,9 +242,27 @@ type Record struct {
 	IdempotencyKey   string `json:"idempotency_key,omitempty"`    // SHADOW_RECORDED + ACHIEVED
 	RuleArtifactHash string `json:"rule_artifact_hash,omitempty"` // SHADOW_RECORDED + ACHIEVED
 	IntentSpecHash   string `json:"intent_spec_hash,omitempty"`   // SHADOW_RECORDED + ACHIEVED
-	TrajectoryHash   string `json:"trajectory_hash,omitempty"`    // SHADOW_RECORDED + ACHIEVED
+	TrajectoryHash   string `json:"trajectory_hash,omitempty"`    // terminal-position record of EVERY completed authorization
 }
 ```
+
+**Refusal-hash commitment (2026-08-08 amendment — the consumer-research
+memo's Q2, answered YES).** The **terminal-position record** of an intent is
+the LAST record `Authorize` emits for it — the one carrying the intent's
+maximum `intent_seq` once the call returns. For ACHIEVED and SHADOW_RECORDED
+that is the record already carrying the four trace fields; for refusals it is
+the `FAILED` / `FAILED_AT_DISPATCH` transition record, or — on the step-1
+paths that log no terminal transition (§4.2 step 1) — the final
+`UNEVALUABLE` / `REVOKED` event record. The terminal-position record carries
+`trajectory_hash` computed over the complete per-intent log **including that
+final event**; no non-terminal record ever carries it. Before this amendment
+only ACHIEVED/SHADOW_RECORDED committed the hash, so a refusal's trajectory
+was recompute-only: the feed asserted WHAT was refused but committed no
+fingerprint a verifier could hold it to. Now every completed authorization —
+grant, shadow, or refusal — commits durably to its own trajectory, and a
+trimmed or edited refusal log is detectable by recomputation (§9 feed
+fixtures; §5.4 claim 13). The three provenance fields are UNCHANGED
+(SHADOW_RECORDED + ACHIEVED only).
 
 `scorer_id` ("forced" | "live") witnesses WHICH scoring authority answered a
 SCORED/RECHECK event, so a forced grant is never byte-indistinguishable from a
@@ -738,6 +759,14 @@ preserving the per-intent `Seq` and `TrajectoryHash` exactly.
    Terminal `ACHIEVED`, reason `""`. **The gate calls no adapter and settles
    nothing in-process.**
 
+**Terminal-record hash commitment (every step above, uniformly):** whenever a
+step emits the intent's FINAL record — the ACHIEVED or SHADOW_RECORDED record,
+a `FAILED`/`FAILED_AT_DISPATCH` transition record, or the last
+`UNEVALUABLE`/`REVOKED` record on a step-1 refusal path — the gate first
+appends the event to the in-memory log, computes `log.TrajectoryHash()`
+INCLUDING it, and stamps that hash on the mirrored `durable.Record`
+(§2.3 refusal-hash commitment). Non-final records never carry the hash.
+
 Event types appearing in the log: `DECLARED`, `RESOLVING`, `ACTIVE`,
 `VERIFYING`, `SCORED`, `RECHECK`, `UNEVALUABLE`, `REVOKED`,
 `IDEMPOTENCY_RESERVED`, `ACHIEVED`, `FAILED`, `FAILED_AT_DISPATCH`,
@@ -899,6 +928,8 @@ non-vacuous by mutating a COPY of the tree and watching it go red.
 | 10 | Determinism conditional on scores: gate over `FakeScorer` vs gate over `HTTPScorer`+`httptest` returning the same scores ⟹ byte-identical `Events` and `TrajectoryHash`, and `basis` appears nowhere. | `TestDeterminismConditionalOnScores`. Mutant: append `basis` to the SCORED detail. |
 | 11 | Stable-once / volatile-twice crosses the wire: a counting `httptest` scorer sees exactly one `declaration` call per criterion and exactly one extra `dispatch` call per volatile criterion. | `TestStableOnceVolatileTwiceAcrossWire`. Mutant: drop the phase guard. |
 | 12 | Live outage refuses, never grants. | Two-process probe: gate `ACHIEVED` with the service up and facts passing; kill the service; the same intent (fresh key) ⟹ `FAILED`, `unevaluable:<criterion>`, no ACHIEVED record in the feed. The kill is real (`taskkill` / `kill`), not mocked. |
+| 13 | Refusal-hash commitment: the terminal-position record of EVERY completed authorization carries `trajectory_hash`, it recomputes from the per-intent records, and no non-terminal record carries one. | `go test ./core/internal/gate -run TerminalHash` — drive one intent per terminal class (ACHIEVED, SHADOW_RECORDED, criteria-FAILED, volatile-recheck, idempotency-collision, and a step-1 refusal) and assert the hash placement + recompute. Mutant: stamp the hash one event early. |
+| 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus quickstart probe 9 (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
 
 ---
 
@@ -995,9 +1026,22 @@ application package may import only `plane` and packages within its own
 tree — never `core/internal/*` or `core/cmd/*`; within any tree, only
 `<tree>/control` may import `<tree>/authority` (`TestKeyPossessionBoundary`).
 
-Outside `core/internal/` live only `core/cmd/server`, `plane` (core), and
-application trees. `contractcheck` ships no production code and no package
-imports it.
+**The verifier tree (rule-pinned, 2026-08-08):** `verifier/` (package
+`verifier` + `verifier/cmd/intent-verify`) imports **nothing from this
+module outside its own tree — not `core/*`, not `plane`, not any application
+tree — in production OR test code**, and no package outside the tree imports
+`verifier`. The verifier's
+independence is structural, not asserted: the examiner that re-derives the
+record cannot run the gate's code, so its recomputation of the
+`TrajectoryHash` encoding (§6) and the feed's invariants is a genuinely
+second implementation. Its stdlib-only twin in Python
+(`verifier/pyverifier/verify.py`) is held to the same reading by the §9 feed
+fixtures. Pinned by `TestImportBoundary` (a `verifier/` file importing the
+module prefix is a violation in prod and test alike).
+
+Outside `core/internal/` live only `core/cmd/server`, `plane` (core),
+application trees, and the `verifier` tree. `contractcheck` ships no
+production code and no package imports it.
 
 ### §7.2 Pinned package surfaces
 
@@ -1286,6 +1330,47 @@ fixture-coupled, not a judgment call — it is stated explicitly in
 `neutrality_test.go`. Regenerating the fixtures with neutral exemplar names
 (both lanes re-greening in the same change) is a recorded `docs/ROADMAP.md`
 follow-up.
+
+### §9.1 Feed fixtures and the verifier twins (2026-08-08)
+
+A second frozen surface extends the same discipline to the feed:
+`core/contract/feed/` holds `events-good.jsonl` (one intent per terminal
+class, NEUTRAL exemplar names — no §9 exemption applies or is needed),
+`events-tampered.jsonl` (the good fixture with ONE detail byte changed — the
+standing mutant), and the expected canonical reports `report-good.txt` /
+`report-tampered.txt`.
+
+- The **generator test** (`core/internal/gate`) re-drives the good fixture's
+  scenarios through the real gate into a temp feed and asserts the produced
+  `events.jsonl` matches the frozen bytes — the fixture can never drift from
+  the gate that emits it.
+- The **Go verifier** (`verifier/`) and the **Python twin**
+  (`verifier/pyverifier/`) each run both fixtures and byte-compare their full
+  report against the frozen expected reports: `VERIFIED` on good, `REFUTED`
+  on tampered. If the fixture directory is absent those tests **skip
+  visibly** — a skipped fixture test is never a green one.
+
+**Verifier verdict semantics (contractual):** tri-state, like the gate it
+audits — `VERIFIED` / `REFUTED` / `UNVERIFIABLE`, and unevaluable never
+collapses into pass: an empty feed, an unparseable non-trailing line, an
+unknown event type, or a terminal-position record carrying NO
+`trajectory_hash` (a pre-amendment or torn intent) is `UNVERIFIABLE`, never
+`VERIFIED`. `REFUTED` is reserved for positive contradiction: a committed
+hash that fails recomputation, a `seq`/`intent_seq` gap or duplicate, a
+missing/mislocated DECLARED, a hash on a non-terminal record, a second
+ACHIEVED for one intent or one idempotency key, or an ACHIEVED /
+SHADOW_RECORDED record missing `idempotency_key` or `intent_spec_hash` — the
+two fields the gate structurally guarantees nonempty on a grant.
+`rule_artifact_hash` is an opaque artifact-plane passthrough a deployment may
+legitimately omit: its absence is never a finding (ruled after probe 9's
+first live run refuted a correct feed on it; the good fixture pins the
+ruling with a grant that carries none). Overall verdict: `REFUTED` if anything refuted, else
+`UNVERIFIABLE` if anything unverifiable, else `VERIFIED`; the CLI exits 0
+ONLY on `VERIFIED`. The verifier reads `events.jsonl` directly and MUST
+reproduce the store's read tolerance exactly (§2.3): trim trailing `\r\n`,
+tolerate a torn/blank TRAILING line, never rewrite. Recomputation parses
+records and re-derives hashes from raw field bytes (UTF-8 byte lengths, never
+character counts); it never re-serializes JSON for comparison.
 
 ---
 

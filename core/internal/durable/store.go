@@ -27,9 +27,11 @@ import (
 // Record is one durable, append-only event line (JSONL). Field order below IS the
 // on-wire and on-disk order. GlobalSeq (json "seq") is monotonic across ALL
 // intents; IntentSeq (json "intent_seq") is the per-intent logical clock, copied
-// UNCHANGED from audit.Event.Seq. The four trace fields are populated ONLY on the
-// ACHIEVED record (omitted otherwise). "seq" is always >=1; "intent_seq" may be 0
-// (the DECLARED event), so it is NOT omitempty.
+// UNCHANGED from audit.Event.Seq. The three provenance fields ride ONLY on
+// SHADOW_RECORDED + ACHIEVED; TrajectoryHash rides on the terminal-position
+// record of EVERY completed authorization (CONTRACT.md §2.3 refusal-hash
+// commitment). "seq" is always >=1; "intent_seq" may be 0 (the DECLARED
+// event), so it is NOT omitempty.
 type Record struct {
 	GlobalSeq int    `json:"seq"`
 	IntentSeq int    `json:"intent_seq"`
@@ -44,7 +46,7 @@ type Record struct {
 	IdempotencyKey   string `json:"idempotency_key,omitempty"`    // SHADOW_RECORDED + ACHIEVED only
 	RuleArtifactHash string `json:"rule_artifact_hash,omitempty"` // SHADOW_RECORDED + ACHIEVED only
 	IntentSpecHash   string `json:"intent_spec_hash,omitempty"`   // SHADOW_RECORDED + ACHIEVED only
-	TrajectoryHash   string `json:"trajectory_hash,omitempty"`    // SHADOW_RECORDED + ACHIEVED only
+	TrajectoryHash   string `json:"trajectory_hash,omitempty"`    // terminal-position record of every completed authorization
 }
 
 // Store is the durable, append-only JSONL feed. Single-process, mutex-guarded
