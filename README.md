@@ -224,15 +224,17 @@ payment controls over static facts (a balance, an fx rate). One command boots
 the real gate and the real scorer, then runs a narrated, self-asserting probe
 ladder — the full plane: keygen → attest → publish, then authorization against
 a SIGNED spec, idempotency collision, a binding criterion, an unattested-hash
-refusal, a signed revocation, a live scorer outage (fail-closed), and the
-attested-but-thin refusal (8 probes):
+refusal, a signed revocation, a live scorer outage (fail-closed), the
+attested-but-thin refusal, and the recompute probe (BOTH verifier twins
+re-derive every commitment from the feed bytes alone and must agree
+byte-for-byte — 9 probes):
 
     # Windows
     powershell -File treasury\quickstart.ps1
     # Linux / macOS / WSL
     ./treasury/quickstart.sh
 
-Expected final line: `RESULT: 6/6 probes passed`. The narrative, the probe
+Expected final line: `RESULT: 9/9 probes passed`. The narrative, the probe
 ladder, and the extended demonstration (signed-artifact verification,
 settlement consumption) are documented in `treasury/README.md`.
 
@@ -247,9 +249,14 @@ intent-plane/
 │   ├── internal/          # gate · lifecycle · audit · durable feed · scoring ·
 │   │                      #   idempotency · contractcheck (test-only pins)
 │   ├── scorer/            # Python resolver+scorer service — SCORER_* env
-│   └── contract/scorer/   # golden wire fixtures — byte-frozen, cross-language
+│   ├── contract/scorer/   # golden wire fixtures — byte-frozen, cross-language
+│   └── contract/feed/     # golden feed fixtures + tampered mutant + frozen
+│                          #   reports (§9.1) — the verifier twins' conformance
 ├── plane/                 # the signed artifact: envelope, spec payload, store,
 │                          #   resolver (verification ONLY — the SDK holds no keys)
+├── verifier/              # the independent examiner: Go pkg + intent-verify CLI
+│   └── pyverifier/        #   + its Python twin — imports NOTHING outside its
+│                          #   tree (§7.1); tri-state VERIFIED/REFUTED/UNVERIFIABLE
 ├── treasury/              # THE APPLICATION built on the SDK — its seats and its demo:
 │   ├── authority/         #   EVERY private-key operation; only treasury/control
 │   │                      #   may import it (TestKeyPossessionBoundary)
@@ -306,7 +313,7 @@ smoke over the real gate and the real scorer:
 ```bash
 powershell -File treasury\quickstart.ps1   # Windows
 ./treasury/quickstart.sh                   # Linux / macOS / WSL
-# expected final line: RESULT: 6/6 probes passed
+# expected final line: RESULT: 9/9 probes passed
 ```
 
 ## Status

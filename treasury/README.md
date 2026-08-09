@@ -32,9 +32,9 @@ first run, boots the scorer with `facts.json` (`balance: 250.0`,
 keygen (test key authority), trust root, attest + publish the four spec
 drafts in `specs/` — builds and boots the gate with `INTENT_SCORER_URL` and
 `INTENT_TRUST_ROOT`, runs the probe ladder (including a live signed
-revocation), and tears everything down. Expected final line:
-`RESULT: 8/8 probes passed` — every probe asserts its terminal, so the demo
-doubles as a smoke gate.
+revocation and the verifier-twin recompute), and tears everything down.
+Expected final line: `RESULT: 9/9 probes passed` — every probe asserts its
+terminal, so the demo doubles as a smoke gate.
 
 ## The probe ladder
 
@@ -48,6 +48,7 @@ doubles as a smoke gate.
 | 6 | Kill the scorer, declare again | `FAILED` `unevaluable:` | fail-closed on outage, demonstrated live |
 | 7 | Declare an attested-but-thin spec (zero criteria) | `FAILED` `unevaluable:empty-criteria` | attestation does not launder vacuity |
 | 8 | Read `GET /v2/events?since=0` | exactly one `ACHIEVED` | emit-and-observe: consumers settle only from the feed |
+| 9 | Run BOTH verifier twins (`bin/intent-verify` + `verifier/pyverifier/verify.py`) over the live `events.jsonl` | `RESULT: VERIFIED`, exit 0, reports byte-identical | an independent examiner re-derives every commitment — trajectory hashes on grants AND refusals, sequence contiguity, exactly-one-ACHIEVED — from the record bytes alone, with no trust in the gate |
 
 `force_scores` (the guarded test affordance) is deliberately absent from this
 showcase — the gate here boots WITHOUT `INTENT_UNSAFE_FORCE_SCORES`, so the
