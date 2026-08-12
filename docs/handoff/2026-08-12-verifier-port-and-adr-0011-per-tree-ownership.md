@@ -32,12 +32,20 @@ asks).
   re-verify: `cd ~/dev/intent-plane && go build ./... && go vet ./... && go test ./... -count=1` (11 ok incl. verifier)
   re-verify: `cd ~/dev/intent-plane && ./core/scorer/.venv/Scripts/python -m pytest verifier/pyverifier -q` (6)
   re-verify: `cd ~/dev/intent-plane && go run ./verifier/cmd/intent-verify core/contract/feed/events-good.jsonl` (VERIFIED, exit 0; tampered fixture REFUTED, exit 1)
-- **built — SDK docs repositioned to the shipped state**: README (verifier
-  in what-ships, verifier test lanes, layout tree, per-tree ownership
-  paragraph, 9/9 probe count, status line), docs/assurance.md (stage table
-  row, "don't have to start from prose" paragraph, two new claim rows
-  incl. the step-1 refusal residual, gap list minus the closed refusal-hash
-  gap, re-run section, 9/9).
+- **built — SDK docs repositioned to the shipped state**: README rewritten
+  around the two-sided sale (operator-verified 2026-08-12): who/question/
+  artifact table; four simplicity-budgeted visuals — hero two-sided mermaid
+  (3 nodes), authority-chain mermaid (author→attester→artifact→gate +
+  tombstone), typographic decision-flow line + terminal bullets, and a
+  stateDiagram drawn VERBATIM from lifecycle/transitions.go (no
+  DECLARED→FAILED edge; door refusals noted as synchronous, no transition);
+  verifier test lanes + intent-verify CLI demo in Try-it; per-tree ownership
+  paragraph; 9/9 probe count; status line incl. "declarant SDK planned, not
+  built". The dense flowcharts moved to docs by audience: full guard-level
+  decision flow → docs/architecture.md, full system picture → 
+  docs/assurance.md ("Where the examiner sits"). assurance.md also updated
+  (stage-table row, two new claim rows incl. the step-1 refusal residual,
+  gap list minus the closed refusal-hash gap, re-run section, 9/9).
 - **built — this repo's records**: ADR-0011 written; ROADMAP verifier row
   now says ported 2026-08-12; ROADMAP header ADR list refreshed
   (0009/0010 reserved, not yet written).
@@ -84,8 +92,8 @@ asks).
 cd ~/dev/intent-plane
 git add CONTRACT.md core/internal core/contract/feed verifier .gitattributes
 git commit -m "feat: verifier cluster ported from the testing monorepo (ADR-0011) - refusal-hash commitment, Go+Python twins, feed fixtures"
-git add README.md docs/assurance.md
-git commit -m "docs: verifier ships here - readme + assurance repositioned to per-tree ownership"
+git add README.md docs/assurance.md docs/architecture.md
+git commit -m "docs: readme rewritten around the two-sided sale; visuals moved to docs by audience"
 git push
 
 cd ~/dev/treasury-intent-controller
