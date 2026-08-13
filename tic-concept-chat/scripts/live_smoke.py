@@ -126,12 +126,16 @@ def main() -> int:
     check(
         "every cited_text is a literal substring of the doc it names",
         len(cites) > 0 and not bad,
-        "all quotes verified against raw doc bytes" if not bad else f"{len(bad)} bad: {bad[:3]}",
+        f"{len(cites)} quotes verified against raw doc bytes" if cites and not bad
+        else f"{len(bad)} bad of {len(cites)}: {bad[:3]}",
     )
 
+    # Non-vacuity: an empty title set is a subset of everything, so a run that
+    # produced NO citations would otherwise pass this check while proving
+    # nothing. Require citations to exist before their titles can be clean.
     titles = {c["title"] for c in cites}
-    check("citations name only the four attached docs", titles <= set(context.DOC_NAMES),
-          f"titles={sorted(titles)}")
+    check("citations name only the attached docs", bool(titles) and titles <= set(context.DOC_NAMES),
+          f"titles={sorted(titles)} vs attached={sorted(context.DOC_NAMES)}")
 
     # ---- Cache prefix behavior --------------------------------------------
     done1 = next((e for e in ev1 if e["type"] == "done"), None)
