@@ -3,12 +3,16 @@
 Local web chat for discussing treasury-intent-controller's design concepts
 (intent lifecycle, tri-state fail-closed scoring, idempotency by
 construction, stable/volatile criteria, deterministic replay) with Claude
-(models per `config/models.json`), primed on the repo's README + CONTRACT.md +
-CONTRACT-DURABILITY.md + CONTRACT-SCORER.md.
+(models per `config/models.json`), primed on the repo's `README.md` +
+`CONTRACT.md` — the two authoritative documents. (Before the 2026-08-03/04
+consolidation the prime was four docs; `CONTRACT-DURABILITY.md` and
+`CONTRACT-SCORER.md` were folded into the single `CONTRACT.md` and deleted,
+and this app was re-pointed at the repo root when it was absorbed into the
+monorepo on 2026-08-05.)
 
 ## Contract-anchored citations
 
-The four docs are attached as citation-enabled `document` blocks, so every
+Both docs are attached as citation-enabled `document` blocks, so every
 claim the model makes is anchored to the exact contract passage it rests on.
 Each reply shows inline `[n]` markers and a **Sources** list quoting the cited
 text and its document. A claim with no citation is visibly the model's own
@@ -17,11 +21,19 @@ model thinks" boundary in view on every turn. Citations plumb the evidence for a
 refute step; they do not perform it - a cited passage still has to actually
 support the claim, so read the quote.
 
-> Status: built, unit-tested (`pytest` 35/35), and **live-verified**
-> (2026-07-14, `scripts/live_smoke.py`): a real turn carried 13 citation
-> deltas, and every `cited_text` was recomputed against the raw bytes of the
-> four contracts - each one a literal substring of the document it names, with
-> no title outside the attached set. The quotes are real, not plausible.
+> Status: built and unit-tested offline (`pytest` 53/53, re-run 2026-08-13).
+> **Live-verified 2026-07-14** (`scripts/live_smoke.py`): a real turn carried
+> 13 citation deltas, and every `cited_text` was recomputed against the raw
+> contract bytes - each one a literal substring of the document it names, with
+> no title outside the attached set. The quotes were real, not plausible.
+>
+> **Honest bound on that evidence:** the live run predates the 2026-08-03/04
+> contract consolidation and the 2026-08-05 absorption, so it measured the
+> four-doc prime, not today's two-doc one. The code was re-pointed and the
+> offline suite (including the trap tripwire below) re-anchored and is green;
+> the credentialed probe has NOT been re-run against the consolidated
+> `CONTRACT.md`. Live status is "verified on the previous doc set", not
+> "verified as configured".
 
 ## Producer≠judge skeptic pass
 
@@ -64,9 +76,11 @@ longer trusted as duty. Verification is mechanical, in lanes 2–3
 > Window mode is now the default, measured against excerpt-only on the same
 > planted set (2026-07-15, `scripts/live_smoke.py`, 19/19 checks). Both modes
 > agree on c1-c3 (overreach, unmarked-inference, marked-inference). c4 is the
-> doc-inversion trap: a real quote from CONTRACT-DURABILITY.md ("calls
-> `adapter.OnAchieved` in-process") whose inverting "no longer " sits just
-> outside the excerpt window - window mode catches it, verdict `overreach`;
+> doc-inversion trap: a real quote whose inverting negation sits just
+> outside the excerpt window - at the time of that run, "calls
+> `adapter.OnAchieved` in-process" from CONTRACT-DURABILITY.md, preceded by
+> "no longer " (see the re-anchoring note below) -
+> window mode catches it, verdict `overreach`;
 > excerpt mode calls it `supported`, correctly given its input, since the
 > negation isn't in it. Cost: excerpt's planted-set judgment call ran
 > in=1150/out=120 tokens, window's ran in=2231/out=387 - roughly 2x the
@@ -76,6 +90,15 @@ longer trusted as duty. Verification is mechanical, in lanes 2–3
 > resolved as `supported` - window rescues true claims too, not just catches
 > inversions. The residual limitation above (outside-window negation,
 > cross-document context) is unchanged by this.
+>
+> **Trap re-anchored 2026-08 (offline-proven, live-unproven).** The sentence
+> the trap quoted did not survive the contract consolidation verbatim, so the
+> probe's `TRAP_QUOTE` is now the spec's backup: "enters the per-intent
+> `TrajectoryHash`" in `CONTRACT.md`, whose inverting "never " sits
+> immediately before it - outside any excerpt. `test_context.py`'s tripwire
+> fails the offline suite the moment that passage is reworded (green
+> 2026-08-13). What is NOT re-established: that window mode still *catches*
+> the trap in a real call. That claim needs a `live_smoke.py` re-run.
 
 ## How it works
 
@@ -83,7 +106,7 @@ longer trusted as duty. Verification is mechanical, in lanes 2–3
 flowchart TD
     U([You]) -->|"a question about the gate"| B["Browser<br/>holds the conversation"]
     B -->|"POST /chat (messages payload)"| S["FastAPI server"]
-    S -->|"prepends the 4 contracts as<br/>citation-enabled document blocks<br/>(first user turn, prompt-cached)"| O["discussion model<br/>(config/models.json)<br/>streaming"]
+    S -->|"prepends README + CONTRACT as<br/>citation-enabled document blocks<br/>(first user turn, prompt-cached)"| O["discussion model<br/>(config/models.json)<br/>streaming"]
     O -->|"SSE deltas: thinking · text · citation · done"| B
     S -.->|"after done: worker extracts claims,<br/>judgment issues verdicts"| K["skeptic lanes<br/>worker + judgment"]
     K -.->|"SSE: skeptic_claims · skeptic_verdict<br/>· skeptic_done · skeptic_error"| B
@@ -92,7 +115,7 @@ flowchart TD
 ```
 
 Each `citation` delta anchors a span of the reply to the exact passage it rests
-on (README, CONTRACT, CONTRACT-DURABILITY, or CONTRACT-SCORER). A claim that
+on (`README.md` or `CONTRACT.md`). A claim that
 arrives with **no** citation is visibly the model's own inference, not contract text.
 The docs are injected server-side into the first user turn, so the browser
 carries only the conversation and the cached prefix stays byte-identical.
@@ -110,16 +133,19 @@ Open http://localhost:8765. Auth resolves from `ANTHROPIC_API_KEY` or an
 - Stateless server: the browser holds the conversation; refresh loses it.
   Use **Export .md** to save a transcript (sources included).
 - The docs are attached as `document` blocks in the first user turn and
-  injected server-side, so the browser never carries the full four-document
+  injected server-side, so the browser never carries the full document
   context. The prefix is prompt-cached; the usage line under each reply shows
   cache write/read tokens (expect a write on turn 1, reads after).
 - Docs are read from the enclosing repo root (`..`) at startup (override
-  with `TIC_DIR`); the server refuses to start if any doc is missing.
+  with `TIC_DIR`); the server refuses to start if any doc is missing. Since
+  the 2026-08-05 absorption that root is the monorepo's, so the chat always
+  primes on the CURRENT `README.md` and `CONTRACT.md` - no copies, no
+  regeneration step.
 - Model choice is config-centralized (rigor's tier discipline, flattened to
   role -> model): `config/models.json` is the only place a model id lives, and
   a sync test fails if a role is referenced in code but missing from config,
   or sits in config with no code path dispatching it.
-- Design spec: `../docs/2026-07-05-tic-concept-chat-design.md`
+- Design spec: `../docs/treasury/2026-07-05-tic-concept-chat-design.md`
 
 ## Test
 
@@ -134,8 +160,11 @@ against the raw contract bytes, checks the cached prefix writes then reads, and
 feeds the judgment lane planted claims - judged in **both** context modes
 (excerpt and window) - whose correct verdicts are known, so a rubber-stamp
 judge cannot pass. The planted set includes a doc-inversion trap: a real quote
-from CONTRACT-DURABILITY.md whose inverting "no longer " sits just outside any
-excerpt, so only window mode can catch it. The run paces its calls, so expect
-~6 minutes wall-clock. Last run 2026-07-15: **19/19**. The API's burst limit
+from `CONTRACT.md` ("enters the per-intent `TrajectoryHash`") whose inverting
+"never " sits just outside any excerpt, so only window mode can catch it. The
+run paces its calls, so expect
+~6 minutes wall-clock. Last run 2026-07-15: **19/19** - against the
+pre-consolidation four-doc prime and the trap's earlier anchor; re-running it
+against today's two-doc prime is open work. The API's burst limit
 trips easily (three model calls per turn); a `Rate limited` result is an
 environment answer, not evidence about the app - pause and re-run.

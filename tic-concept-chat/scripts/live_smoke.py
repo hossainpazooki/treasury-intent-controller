@@ -4,7 +4,7 @@
 This probes the RESULTING STATE of a real run, and every check is written to
 FAIL a system that merely "streams something plausible":
 
-- citation quotes are recomputed against the raw bytes of the four contracts
+- citation quotes are recomputed against the raw bytes of the attached docs
   (a paraphrased or hallucinated `cited_text` fails);
 - the cached prefix must WRITE on turn 1 and READ on turn 2 (a prefix
   perturbed by a single byte silently re-writes, and that fails here);
@@ -100,7 +100,7 @@ def main() -> int:
         time.sleep(0.1)
 
     client = httpx.Client(base_url="http://127.0.0.1:8799")
-    docs = context.load_docs()  # raw bytes of the four contracts, from disk
+    docs = context.load_docs()  # raw bytes of the attached docs, from disk
 
     # ---- Turn 1 -----------------------------------------------------------
     msgs = [{"role": "user", "content": QUESTION}]

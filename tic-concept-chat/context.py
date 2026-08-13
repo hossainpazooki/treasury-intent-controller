@@ -1,6 +1,7 @@
 """Builds the Opus context from treasury-intent-controller's authoritative docs.
 
-The framing lives in the system prompt; the four docs are attached as
+The framing lives in the system prompt; the docs named in `DOC_NAMES` are
+attached as
 `document` content blocks with citations enabled, so every claim Opus makes can
 be anchored to the exact passage it rests on (and an uncited claim is visibly
 its own inference, not contract text).
@@ -53,10 +54,10 @@ def load_docs(base: Path | None = None) -> dict[str, str]:
 
 
 def build_document_blocks(base: Path | None = None) -> list[dict]:
-    """The four docs as citation-enabled `document` blocks.
+    """The `DOC_NAMES` docs as citation-enabled `document` blocks.
 
-    The cache breakpoint sits on the last block, so the framing + all four
-    docs are cached as one prefix (they precede it in render order).
+    The cache breakpoint sits on the last block, so the framing + every doc
+    is cached as one prefix (they precede it in render order).
     """
     docs = load_docs(base)
     blocks: list[dict] = []
