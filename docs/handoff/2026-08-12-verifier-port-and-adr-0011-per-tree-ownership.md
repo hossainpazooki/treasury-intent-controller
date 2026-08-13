@@ -49,6 +49,13 @@ asks).
 - **built — this repo's records**: ADR-0011 written; ROADMAP verifier row
   now says ported 2026-08-12; ROADMAP header ADR list refreshed
   (0009/0010 reserved, not yet written).
+- **built — article positioning note**:
+  `docs/research/2026-08-12-plane-as-separating-surface.md` — presence-by-
+  contract vs presence-by-containment, the four crossings with honest
+  standing (crossing 1 unsigned today), middleware/backbone/surface, two
+  zoom levels (hyperplane concept over the two-sided sale). Written for the
+  "Signed, Sealed, Deliverable" article seeded from the Jordan discussion;
+  ASCII visuals, share-ready, same genre/home as the consumer-research memo.
 - **verified — full gates fresh-green both repos at this tree** (2026-08-12):
   intent-plane Go 11 ok + contractcheck 6/6 + scorer 42p/5s + pyverifier 6;
   TIC contractcheck 6/6 after doc edits; earlier same session the TIC full
@@ -99,5 +106,7 @@ git push
 cd ~/dev/treasury-intent-controller
 git add docs/adr/2026-08-12-ADR-0011-consumer-packages-live-in-the-sdk-repo.md docs/ROADMAP.md docs/handoff
 git commit -m "docs: ADR-0011 per-tree ownership; verifier-port roadmap row; handoff"
+git add docs/research/2026-08-12-plane-as-separating-surface.md
+git commit -m "docs: separating-surface positioning note for the article"
 git push
 ```
