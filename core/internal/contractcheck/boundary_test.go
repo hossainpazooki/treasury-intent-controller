@@ -183,26 +183,30 @@ func sorted(set map[string]bool) []string {
 	return out
 }
 
+// consumerTrees are the CONSUMER trees (§7.1): stricter than applications —
+// each imports nothing from the module outside its own tree, not even the
+// plane artifact. Both names are §1.1 role vocabulary, not application
+// vocabulary.
+var consumerTrees = map[string]bool{"verifier": true, "declarant": true}
+
 // TestImportBoundary pins the intent interface boundary. Core packages: the
 // package SET and its import adjacency match CONTRACT.md §7 exactly.
 // Application trees: pinned by rule — an application package may import only
 // the plane artifact and packages within its OWN tree; nothing in the core
-// may import an application package, in production OR test code. The
-// verifier tree: stricter than an application — it imports nothing from the
-// module outside its own tree, not even the plane artifact (§7.1: the
-// examiner's independence is structural, and "verifier" is §1.1 role
-// vocabulary, not application vocabulary).
+// may import an application package, in production OR test code. Consumer
+// trees (verifier, declarant): import nothing from the module outside their
+// own tree (§7.1 — independence is structural).
 func TestImportBoundary(t *testing.T) {
 	root := repoRoot(t)
 	dirs := goPackageDirs(t, root)
 
-	var coreDirs, appDirs, verifierDirs []string
+	var coreDirs, appDirs, consumerDirs []string
 	for _, d := range dirs {
 		switch {
 		case isCoreDir(d):
 			coreDirs = append(coreDirs, d)
-		case appTree(d) == "verifier":
-			verifierDirs = append(verifierDirs, d)
+		case consumerTrees[appTree(d)]:
+			consumerDirs = append(consumerDirs, d)
 		default:
 			appDirs = append(appDirs, d)
 		}
@@ -257,18 +261,19 @@ func TestImportBoundary(t *testing.T) {
 		}
 	}
 
-	// The verifier tree (§7.1): the independent examiner re-derives the feed's
-	// commitments WITHOUT running the gate's code, so it imports nothing from
-	// the module outside its own tree — not core, not plane, not an
-	// application tree — in production OR test code.
-	for _, d := range verifierDirs {
+	// Consumer trees (§7.1): the examiner re-derives the feed's commitments
+	// WITHOUT running the gate's code, and the embedding platform team runs
+	// none of the plane's code — so each tree imports nothing from the
+	// module outside itself, in production OR test code.
+	for _, d := range consumerDirs {
+		tree := appTree(d)
 		prod, testOnly := intraModuleImports(t, root, d)
 		for _, set := range []map[string]bool{prod, testOnly} {
 			for p := range set {
-				if p == d || appTree(p) == "verifier" {
+				if p == d || appTree(p) == tree {
 					continue
 				}
-				t.Errorf("%s: verifier package imports %q — the verifier imports nothing from the module outside its own tree (§7.1)", d, p)
+				t.Errorf("%s: consumer package imports %q — a consumer tree imports nothing from the module outside its own tree (§7.1)", d, p)
 			}
 		}
 	}

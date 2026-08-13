@@ -64,10 +64,11 @@ echo "[boot] scorer with treasury facts (balance=250, fx_rate=1.30)"
 SCORER_FACTS_JSON=$(cat "$here/facts.json") SCORER_PORT=$scorer_port "$venv_py" -m scorer &
 scorer_pid=$!
 
-echo "[boot] building the gate, the plane role CLIs, and the verifier"
+echo "[boot] building the gate, the plane role CLIs, the verifier, and the declarant"
 go build -o "$repo/bin/intent-gate" "$repo/core/cmd/server"
 go build -o "$repo/bin/intent-control" "$repo/treasury/control"
 go build -o "$repo/bin/intent-verify" "$repo/verifier/cmd/intent-verify"
+go build -o "$repo/bin/intent-declare" "$repo/declarant/cmd/intent-declare"
 
 # The plane ladder: keygen -> trust root -> attest -> publish. Nothing the
 # probes declare against exists until the control role's key has signed it;
@@ -131,16 +132,37 @@ echo "[plane] revoking the within-limits spec (signed tombstone)"
     -store "$data_dir/specs" -hash "$hash01" -ref quickstart-pull
 probe "declare against revoked spec" 07-revoked.json "$hash01" FAILED revoked:quickstart-pull "authority is revocable: the tombstone's ref is witnessed in the refusal"
 
+# Probe 6 (declarant consumption, CONTRACT.md 2.7): declare through the
+# published SDK - deterministic derived key, exact wire marshal, classified
+# terminal. The first declare authorizes; a second declare with the SAME
+# derived key (fresh episode) collides and classifies ALREADY_RESERVED with
+# same_key_retry_safe=false. A refusing CLI exits nonzero by design - not a
+# script abort.
+d1_rc=0; d1=$("$repo/bin/intent-declare" -gate "$gate_url" -seed quickstart-declarant \
+    -spec-hash "$hash02" -scope per-actor -run quickstart -tool sample.transfer \
+    -args '{"amount":"25","unit":"alpha"}') || d1_rc=$?
+d2_rc=0; d2=$("$repo/bin/intent-declare" -gate "$gate_url" -seed quickstart-declarant-2 \
+    -spec-hash "$hash02" -scope per-actor -run quickstart -tool sample.transfer \
+    -args '{"amount":"25","unit":"alpha"}') || d2_rc=$?
+case "$d1" in *"class=PROCEED terminal=ACHIEVED"*) d1_ok=1;; *) d1_ok=0;; esac
+case "$d2" in *"class=ALREADY_RESERVED"*"same_key_retry_safe=false"*) d2_ok=1;; *) d2_ok=0;; esac
+if [ "$d1_rc" -eq 0 ] && [ "$d1_ok" = 1 ] && [ "$d2_rc" -eq 1 ] && [ "$d2_ok" = 1 ]; then
+    pass=$((pass + 1)); echo "[PASS] declarant SDK: $d1 -> then $d2"
+else
+    fail=$((fail + 1)); echo "[FAIL] declarant SDK: rc=$d1_rc/$d2_rc out1=$d1 out2=$d2"
+fi
+echo "       why it matters: the published SDK is the embedding half of the sale - derived keys make dedup real, and the collision is classified, not mysterious"
+
 echo "[chaos] killing the scorer to prove fail-closed on outage"
 kill "$scorer_pid"; sleep 1
 probe "declare during scorer outage" 04-outage.json "$hash02" FAILED unevaluable "an unreachable scorer denies - unevaluable NEVER collapses into a pass"
 probe "attested-but-thin spec" 05-empty-criteria.json "$hash05" FAILED unevaluable:empty-criteria "thin-spec defense - attestation does not launder vacuity; zero criteria still refuse"
 
 achieved=$(curl -fsS "$gate_url/v2/events?since=0" | "$venv_py" -c "import json,sys; e=json.load(sys.stdin)['events']; print(sum(1 for r in e if r['type']=='ACHIEVED'))")
-if [ "$achieved" = "1" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 1 ACHIEVED record"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 1 ACHIEVED, got $achieved"; fi
+if [ "$achieved" = "2" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 2 ACHIEVED records - one per authorized key, never a duplicate"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 2 ACHIEVED, got $achieved"; fi
 echo "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-# Probe 9: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
+# Probe 10: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
 # every commitment - trajectory hashes on grants AND refusals, sequence
 # contiguity, exactly-one-ACHIEVED - from the record bytes alone, and their
 # reports must be byte-identical. `set -e` is suspended around the calls: a
@@ -156,5 +178,5 @@ else
 fi
 echo "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-echo "RESULT: $pass/9 probes passed"
+echo "RESULT: $pass/10 probes passed"
 [ "$fail" -eq 0 ]

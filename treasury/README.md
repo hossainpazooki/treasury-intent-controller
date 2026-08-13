@@ -32,9 +32,10 @@ first run, boots the scorer with `facts.json` (`balance: 250.0`,
 keygen (test key authority), trust root, attest + publish the four spec
 drafts in `specs/` — builds and boots the gate with `INTENT_SCORER_URL` and
 `INTENT_TRUST_ROOT`, runs the probe ladder (including a live signed
-revocation and the verifier-twin recompute), and tears everything down.
-Expected final line: `RESULT: 9/9 probes passed` — every probe asserts its
-terminal, so the demo doubles as a smoke gate.
+revocation, the declarant-SDK consumption probe, and the verifier-twin
+recompute), and tears everything down. Expected final line:
+`RESULT: 10/10 probes passed` — every probe asserts its terminal, so the
+demo doubles as a smoke gate.
 
 ## The probe ladder
 
@@ -45,10 +46,11 @@ terminal, so the demo doubles as a smoke gate.
 | 3 | Declare over-threshold | `FAILED`, reason names `balance` (and NOT `unevaluable`) | criteria actually bind |
 | 4 | Declare citing a hash nobody attested | `FAILED` `unevaluable:unattested-spec` | no signature, no scoring — P1's fail-closed floor |
 | 5 | Revoke the within-limits spec (signed tombstone), declare against it | `FAILED` `revoked:quickstart-pull` | authority is revocable; the tombstone's ref is witnessed |
-| 6 | Kill the scorer, declare again | `FAILED` `unevaluable:` | fail-closed on outage, demonstrated live |
-| 7 | Declare an attested-but-thin spec (zero criteria) | `FAILED` `unevaluable:empty-criteria` | attestation does not launder vacuity |
-| 8 | Read `GET /v2/events?since=0` | exactly one `ACHIEVED` | emit-and-observe: consumers settle only from the feed |
-| 9 | Run BOTH verifier twins (`bin/intent-verify` + `verifier/pyverifier/verify.py`) over the live `events.jsonl` | `RESULT: VERIFIED`, exit 0, reports byte-identical | an independent examiner re-derives every commitment — trajectory hashes on grants AND refusals, sequence contiguity, exactly-one-ACHIEVED — from the record bytes alone, with no trust in the gate |
+| 6 | Declare through the published declarant SDK (`bin/intent-declare`, derived deterministic key), then repeat with the SAME derived key | first: `class=PROCEED terminal=ACHIEVED`, exit 0; second: `class=ALREADY_RESERVED`, `same_key_retry_safe=false`, exit 1 | the embedding half of the two-sided sale runs live: derived keys make dedup real, and a collision is classified, not mysterious (§2.7) |
+| 7 | Kill the scorer, declare again | `FAILED` `unevaluable:` | fail-closed on outage, demonstrated live |
+| 8 | Declare an attested-but-thin spec (zero criteria) | `FAILED` `unevaluable:empty-criteria` | attestation does not launder vacuity |
+| 9 | Read `GET /v2/events?since=0` | exactly two `ACHIEVED` — one per authorized key | emit-and-observe: consumers settle only from the feed, and no key ever settles twice |
+| 10 | Run BOTH verifier twins (`bin/intent-verify` + `verifier/pyverifier/verify.py`) over the live `events.jsonl` | `RESULT: VERIFIED`, exit 0, reports byte-identical | an independent examiner re-derives every commitment — trajectory hashes on grants AND refusals, sequence contiguity, exactly-one-ACHIEVED — from the record bytes alone, with no trust in the gate |
 
 `force_scores` (the guarded test affordance) is deliberately absent from this
 showcase — the gate here boots WITHOUT `INTENT_UNSAFE_FORCE_SCORES`, so the
@@ -58,6 +60,25 @@ absent is the SCORER-side ATLAS artifact verification — the scorer runs with
 the null resolver and says so on the wire
 (`resolver=null: verification skipped`), which is the honest boundary between
 this quickstart and the extended demonstration below.
+
+## The chassis flow test
+
+The quickstart proves the *gate* half live. The seats themselves — authoring,
+authority, control — are covered by `go test ./treasury` (`flow_test.go`),
+which takes the **maker-checker chain as the unit**: one linear test builds
+the real seat binaries and execs them exactly as an operator would (no
+production code was refactored for testability), running
+author → keygen → root → attest → publish → promote → revoke and asserting
+each refusal edge where it naturally occurs (a second keygen over the same
+file, a publish under a foreign trust root, a second promotion of an
+already-enforcing payload).
+
+What it pins is `CONTRACT.md` §5.4 claim 16: passage-exact source pins and
+shadow-by-default out of authoring; attested bytes identical to executed
+bytes through the store; promotion as a NEW artifact rather than an edit in
+place; revocation scoped to exactly one content address. The pins are over
+behavior that already existed, so green-on-first-run proves nothing about
+them — non-vacuity comes from three plant-red runs recorded in the claim row.
 
 ## The extended demonstration (separate environments required)
 

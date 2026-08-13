@@ -522,6 +522,64 @@ the store stays authoritative; (4) otherwise `ErrUnattested` ⟹ the gate
 refuses `unevaluable:unattested-spec`. Bare criteria cannot arrive at all:
 the wire DTO has no such field (§2.2).
 
+### §2.7 The declarant discipline (2026-08-12)
+
+The declarant-side rules any embedding must encode. The `declarant/` tree
+ships them as code (the platform team's half of the two-sided sale); this
+section is the normative text it is held to.
+
+- **Request marshal.** Exactly the §2.2 declarant-owned fields:
+  `episode_seed`, `idempotency_key`, `intent_spec_hash`,
+  `spec.idempotency_scope`; `rule_artifact_hash` is an optional passthrough
+  (omitted when empty); `spec_envelope` optional (§2.6 hybrid path).
+  **`force_scores` exists in no declarant type** — the guarded test
+  affordance is unreachable through the SDK by construction. The server's
+  `DisallowUnknownFields` makes any extra field a loud 400: version skew
+  fails loudly, and additive SDK evolution amends §2.2 FIRST.
+- **Key derivation.** Idempotency keys are deterministic from the action's
+  identity, never random per attempt:
+  `<scope>:<agent-run-id>:<tool-name>:<sha256-hex(canonical-args)>`
+  (`declarant.DeriveKey`). Canonicalizing the args is the CALLER's duty (a
+  stable byte serialization); the SDK hashes the bytes it is given. A fresh
+  UUID per attempt deletes the dedup property the gate exists to enforce; a
+  too-coarse key bricks a genuinely distinct call forever (reservations
+  never expire, §7.2).
+- **Terminal classification is TOTAL** over the closed §3.2/§3.3 vocabulary,
+  by prefix parsing (specific prefixes before generic; no regex), and
+  carries retry-by-reservation-position semantics. Anything outside the
+  closed vocabulary classifies fail-closed as `Unknown` (surface, no
+  auto-retry): a new cause class amends §3.3 first, then this table.
+
+| Terminal / reason shape | Class | Same-key retry |
+|---|---|---|
+| `ACHIEVED` | `Proceed` | collides (correctly — the action happened) |
+| `SHADOW_RECORDED` | `ShadowRecorded` | permitted (nothing reserved, nothing authorized) |
+| `FAILED`, `unevaluable:absent-key` | `SDKBug` | key not reserved — but never auto-retry; fix the caller |
+| `FAILED`, `unevaluable:unattested-spec` | `SpecUnattested` | after attestation |
+| `FAILED`, `unevaluable:invalid-posture` / `unevaluable:empty-criteria` / `unevaluable:invalid-volatility:<name>` | `SpecDefect` | route to the spec owner; never retry unchanged |
+| `FAILED`, `unevaluable:human-judgment:<name>` | `HumanJudgment` | after a human resolves it (new attestation) |
+| `FAILED`, `unevaluable:<criterion>` | `Unevaluable` | backoff retry; never treat as pass |
+| `FAILED` or `FAILED_AT_DISPATCH`, `revoked:<ref>` | `Revoked` | only after a fresh attestation |
+| `FAILED_AT_DISPATCH`, `volatile-recheck:<name>` | `FactDrift` | permitted (the key was NOT reserved) |
+| `FAILED_AT_DISPATCH`, `idempotency-collision` | `AlreadyReserved` | NEVER with intent to execute; reconcile from the feed by key |
+| `FAILED`, joined criterion names (no `unevaluable:`/`revoked:` prefix) | `PolicyDenied` | permitted after facts change |
+| anything else | `Unknown` | no; surface |
+
+The PolicyDenied row is mechanically "non-empty and contains no `:`":
+criterion names MUST NOT contain `:` (nothing validates this today — a
+failing criterion named `a:b` classifies `Unknown`, which errs fail-closed).
+The retry column states reservation position; `SDKBug`'s "never auto-retry"
+is caller guidance layered on top of it.
+
+- **The 500 edge.** HTTP 500 implies no terminal guarantee (§4.1): the key
+  may be reserved with no ACHIEVED record. The declarant consults
+  `GET /v2/intents/{id}/events` BEFORE deciding anything; only an observed
+  record decides, and an unreachable feed decides nothing (`Indeterminate`,
+  fail-closed).
+- **Settlement.** Side effects key off observed ACHIEVED records from the
+  cursor feed (`?since=<durable cursor>`, §5.3 `feedConsumer` discipline),
+  never off the synchronous response alone.
+
 ---
 
 ## §3 Lifecycle & cause classes
@@ -929,7 +987,9 @@ non-vacuous by mutating a COPY of the tree and watching it go red.
 | 11 | Stable-once / volatile-twice crosses the wire: a counting `httptest` scorer sees exactly one `declaration` call per criterion and exactly one extra `dispatch` call per volatile criterion. | `TestStableOnceVolatileTwiceAcrossWire`. Mutant: drop the phase guard. |
 | 12 | Live outage refuses, never grants. | Two-process probe: gate `ACHIEVED` with the service up and facts passing; kill the service; the same intent (fresh key) ⟹ `FAILED`, `unevaluable:<criterion>`, no ACHIEVED record in the feed. The kill is real (`taskkill` / `kill`), not mocked. |
 | 13 | Refusal-hash commitment: the terminal-position record of EVERY completed authorization carries `trajectory_hash`, it recomputes from the per-intent records, and no non-terminal record carries one. | `go test ./core/internal/gate -run TerminalHash` — drive one intent per terminal class (ACHIEVED, SHADOW_RECORDED, criteria-FAILED, volatile-recheck, idempotency-collision, and a step-1 refusal) and assert the hash placement + recompute. Mutant: stamp the hash one event early. |
-| 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus quickstart probe 9 (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
+| 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus quickstart probe 10 (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
+| 15 | Declarant discipline (§2.7): the SDK marshals exactly the declarant-owned §2.2 fields (golden request bytes), `force_scores` exists in no declarant type, terminal classification is total with a fail-closed `Unknown`, and the 500 edge consults the per-intent feed before deciding. | `go test ./declarant -count=1` — golden-bytes marshal test; classification table test covering every §3.2/§3.3 cause class AND an out-of-vocabulary reason; an `httptest` 500-edge test proving the feed consult precedes the decision. Mutant: drop the `Unknown` fallback (default to retry) → classification test red. Live: quickstart probe 6 (declare through the SDK ⟹ `PROCEED`; re-declare same key ⟹ `ALREADY_RESERVED`). |
+| 16 | Maker-checker chassis, end to end (2026-08-12): authoring routes every provision (criterion / human-judgment / named unknown), pins each to the sha256 of its EXACT passage and defaults a new draft to shadow; the attested bytes ARE the executed bytes (envelope payload byte-identical to the draft file, its hash is the content address, store resolution returns the same payload with the human-judgment entry intact — attestation launders nothing); promotion is a NEW authority act (new hash, only `enforcement_posture` differs, the shadow artifact's stored bytes untouched, §2.6); revocation kills exactly the revoked artifact, and the promoted sibling still resolves. | `go test ./treasury -count=1` — `TestMakerCheckerFlow` execs the REAL seat binaries built by `TestMain` (author → keygen → root → attest → publish → promote → revoke), with each refusal edge at its natural point in the chain (second keygen refused, foreign-root publish refused, double promotion refused); `TestAuthoringRefusals` covers empty passage, criterion+judgment both, unknown source field, invalid posture. Mutants (all three run 2026-08-12, each red for its own reason): drop the `SourcePins` append ⟹ pin assertion; make promote re-attest the pre-flip bytes ⟹ "promotion did not change the content address"; delete the keygen overwrite refusal ⟹ second-keygen assertion. |
 
 ---
 
@@ -1026,22 +1086,27 @@ application package may import only `plane` and packages within its own
 tree — never `core/internal/*` or `core/cmd/*`; within any tree, only
 `<tree>/control` may import `<tree>/authority` (`TestKeyPossessionBoundary`).
 
-**The verifier tree (rule-pinned, 2026-08-08):** `verifier/` (package
-`verifier` + `verifier/cmd/intent-verify`) imports **nothing from this
-module outside its own tree — not `core/*`, not `plane`, not any application
-tree — in production OR test code**, and no package outside the tree imports
-`verifier`. The verifier's
-independence is structural, not asserted: the examiner that re-derives the
-record cannot run the gate's code, so its recomputation of the
-`TrajectoryHash` encoding (§6) and the feed's invariants is a genuinely
-second implementation. Its stdlib-only twin in Python
+**Consumer trees (rule-pinned): `verifier/` (2026-08-08) and `declarant/`
+(2026-08-12).** Each imports **nothing from this module outside its own tree
+— not `core/*`, not `plane`, not any application tree — in production OR
+test code**, and no package outside a consumer tree imports it. The
+independence is structural, not asserted. For the verifier: the examiner
+that re-derives the record cannot run the gate's code, so its recomputation
+of the `TrajectoryHash` encoding (§6) and the feed's invariants is a
+genuinely second implementation — and its stdlib-only Python twin
 (`verifier/pyverifier/verify.py`) is held to the same reading by the §9 feed
-fixtures. Pinned by `TestImportBoundary` (a `verifier/` file importing the
-module prefix is a violation in prod and test alike).
+fixtures. For the declarant: the embedding platform team runs none of the
+plane's code — the SDK is a wire client only, so everything it can and
+cannot send is visible in its own tree (`force_scores` exists in no
+declarant type, §2.7). Pinned by `TestImportBoundary` (a consumer-tree file
+importing the module prefix is a violation in prod and test alike).
+**Per-tree ownership (ADR-0011):** consumer trees are born and evolve in the
+SDK repo; this monorepo consumes them back — its quickstart probes are their
+live integration test.
 
 Outside `core/internal/` live only `core/cmd/server`, `plane` (core),
-application trees, and the `verifier` tree. `contractcheck` ships no
-production code and no package imports it.
+application trees, and the consumer trees `verifier` and `declarant`.
+`contractcheck` ships no production code and no package imports it.
 
 ### §7.2 Pinned package surfaces
 

@@ -225,16 +225,18 @@ the real gate and the real scorer, then runs a narrated, self-asserting probe
 ladder — the full plane: keygen → attest → publish, then authorization against
 a SIGNED spec, idempotency collision, a binding criterion, an unattested-hash
 refusal, a signed revocation, a live scorer outage (fail-closed), the
-attested-but-thin refusal, and the recompute probe (BOTH verifier twins
-re-derive every commitment from the feed bytes alone and must agree
-byte-for-byte — 9 probes):
+attested-but-thin refusal, the declarant-SDK consumption probe (declare
+through the published `declarant/` package: derived key ⇒ `PROCEED`,
+same-key re-declare ⇒ `ALREADY_RESERVED`), and the recompute probe (BOTH
+verifier twins re-derive every commitment from the feed bytes alone and must
+agree byte-for-byte — 10 probes):
 
     # Windows
     powershell -File treasury\quickstart.ps1
     # Linux / macOS / WSL
     ./treasury/quickstart.sh
 
-Expected final line: `RESULT: 9/9 probes passed`. The narrative, the probe
+Expected final line: `RESULT: 10/10 probes passed`. The narrative, the probe
 ladder, and the extended demonstration (signed-artifact verification,
 settlement consumption) are documented in `treasury/README.md`.
 
@@ -257,6 +259,9 @@ intent-plane/
 ├── verifier/              # the independent examiner: Go pkg + intent-verify CLI
 │   └── pyverifier/        #   + its Python twin — imports NOTHING outside its
 │                          #   tree (§7.1); tri-state VERIFIED/REFUTED/UNVERIFIABLE
+├── declarant/             # the embedding SDK (born SDK-side, consumed back here —
+│                          #   ADR-0011): exact wire marshal, DeriveKey, total
+│                          #   terminal classification, 500-edge feed consult (§2.7)
 ├── treasury/              # THE APPLICATION built on the SDK — its seats and its demo:
 │   ├── authority/         #   EVERY private-key operation; only treasury/control
 │   │                      #   may import it (TestKeyPossessionBoundary)
@@ -313,7 +318,7 @@ smoke over the real gate and the real scorer:
 ```bash
 powershell -File treasury\quickstart.ps1   # Windows
 ./treasury/quickstart.sh                   # Linux / macOS / WSL
-# expected final line: RESULT: 9/9 probes passed
+# expected final line: RESULT: 10/10 probes passed
 ```
 
 ## Status

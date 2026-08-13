@@ -39,7 +39,7 @@ try {
     $env:SCORER_PORT = "$scorerPort"
     $scorer = Start-Process -FilePath $venvPy -ArgumentList "-m", "scorer" -WorkingDirectory (Join-Path $repo "core\scorer") -PassThru -WindowStyle Hidden
 
-    Write-Host "[boot] building the gate, the plane role CLIs, and the verifier"
+    Write-Host "[boot] building the gate, the plane role CLIs, the verifier, and the declarant"
     & go build -o (Join-Path $repo "bin\intent-gate.exe") "$repo\core\cmd\server"
     # A failing NATIVE command does not halt under -File even with
     # ErrorActionPreference=Stop, so a broken build would silently probe the
@@ -50,6 +50,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "go build (control) failed" }
     & go build -o (Join-Path $repo "bin\intent-verify.exe") "$repo\verifier\cmd\intent-verify"
     if ($LASTEXITCODE -ne 0) { throw "go build (verifier) failed" }
+    & go build -o (Join-Path $repo "bin\intent-declare.exe") "$repo\declarant\cmd\intent-declare"
+    if ($LASTEXITCODE -ne 0) { throw "go build (declarant) failed" }
     $control = Join-Path $repo "bin\intent-control.exe"
 
     # The plane ladder: keygen -> trust root -> attest -> publish. Nothing the
@@ -111,6 +113,24 @@ try {
         -store (Join-Path $dataDir "specs") -hash $hash01 -ref quickstart-pull | Out-Null
     Probe "declare against revoked spec" "07-revoked.json" $hash01 "FAILED" "revoked:quickstart-pull" "authority is revocable: the tombstone's ref is witnessed in the refusal"
 
+    # Probe 6 (declarant consumption, CONTRACT.md 2.7): declare through the
+    # published SDK - deterministic derived key, exact wire marshal, classified
+    # terminal. First declare authorizes; a second declare with the SAME derived
+    # key (fresh episode) collides, classified ALREADY_RESERVED. A refusing CLI
+    # exits nonzero by design - a probe assertion, not a script abort.
+    $declare = Join-Path $repo "bin\intent-declare.exe"
+    $d1 = (& $declare -gate $gateUrl -seed quickstart-declarant -spec-hash $hash02 `
+        -scope per-actor -run quickstart -tool sample.transfer -args '{"amount":"25","unit":"alpha"}' | Out-String).Trim()
+    $d1Rc = $LASTEXITCODE
+    $d2 = (& $declare -gate $gateUrl -seed quickstart-declarant-2 -spec-hash $hash02 `
+        -scope per-actor -run quickstart -tool sample.transfer -args '{"amount":"25","unit":"alpha"}' | Out-String).Trim()
+    $d2Rc = $LASTEXITCODE
+    $ok = ($d1Rc -eq 0) -and ($d1 -like "*class=PROCEED terminal=ACHIEVED*") -and
+          ($d2Rc -eq 1) -and ($d2 -like "*class=ALREADY_RESERVED*same_key_retry_safe=false*")
+    if ($ok) { $pass++; Write-Host "[PASS] declarant SDK: $d1 -> then $d2" }
+    else { $fail++; Write-Host "[FAIL] declarant SDK: rc=$d1Rc/$d2Rc out1=$d1 out2=$d2" }
+    Write-Host "       why it matters: the published SDK is the embedding half of the sale - derived keys make dedup real, and the collision is classified, not mysterious"
+
     Write-Host "[chaos] killing the scorer to prove fail-closed on outage"
     Stop-Process -Id $scorer.Id -Force
     Start-Sleep -Milliseconds 500
@@ -119,11 +139,11 @@ try {
 
     $events = Invoke-RestMethod -Uri "$gateUrl/v2/events?since=0"
     $achieved = @($events.events | Where-Object { $_.type -eq "ACHIEVED" })
-    if ($achieved.Count -eq 1) { $pass++; Write-Host "[PASS] durable feed: exactly 1 ACHIEVED record among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
-    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 1 ACHIEVED, got $($achieved.Count)" }
+    if ($achieved.Count -eq 2) { $pass++; Write-Host "[PASS] durable feed: exactly 2 ACHIEVED records - one per authorized key - among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
+    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 2 ACHIEVED, got $($achieved.Count)" }
     Write-Host "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-    # Probe 9: the recompute probe (CONTRACT.md 9.1). Both verifier twins
+    # Probe 10: the recompute probe (CONTRACT.md 9.1). Both verifier twins
     # re-derive every commitment - trajectory hashes on grants AND refusals,
     # sequence contiguity, exactly-one-ACHIEVED - from the record bytes alone,
     # and their reports must agree line-for-line. A refuting verifier exits
@@ -137,7 +157,7 @@ try {
     else { $fail++; Write-Host "[FAIL] verifier recompute: goExit=$goRc pyExit=$pyRc identical=$($goReport -eq $pyReport)"; Write-Host $goReport }
     Write-Host "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-    Write-Host ("RESULT: {0}/9 probes passed" -f $pass)
+    Write-Host ("RESULT: {0}/10 probes passed" -f $pass)
 }
 finally {
     # Reclaim on EVERY exit path - a Wait-Healthy timeout or a transport throw
