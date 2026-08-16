@@ -127,3 +127,11 @@ performance, or the R4 OTel story. Venue/positioning judgment was out of scope.
   state early that the gate composes with routers — the router decides WHERE
   a request goes, the gate decides WHETHER the action is authorized — and
   that intent-plane does not route, scrub, or reduce spend.
+- Don't imply the "signed gate + verifiable audit" category is empty — it is
+  crowded, and an in-toto `agent-decision/v0.1` RFC is open (cursory note in
+  the 2026-08-16 consumer-signal addendum). Lead with the differentiators.
+- Never compress the positioning to "the policy layer" — a layer is a volume,
+  and `2026-08-12-plane-as-separating-surface.md` §3 is the authority: the
+  plane is the surface policy crosses. "Admission controller + audit log" is
+  the platform-reader translation (ZOOM MID), always with the verifiable
+  record named as the differentiator (live compression attempt, 2026-08-16).

@@ -3,7 +3,7 @@
 2026-08-16 (UTC; the conversation was relayed 2026-08-15 local). Discussion
 record: the operator relayed transcript excerpts of a conversation with
 Jordan, a platform architect — deep Kubernetes/service-mesh background, runs
-an internal LLM platform product under central-team guardrail mandates (a
+an internal LLM platform product — an agentic Istio implementation he names Astio — under central-team guardrail mandates (a
 list of ~20). This is the FIRST external practitioner reaction to
 intent-plane, and it amends the 2026-08-14 distribution assessment's
 avenue-1 premise line "zero external consumers as evidence": there is now
@@ -70,3 +70,13 @@ article claim ledger (same day).
 - The venue triad + fourth candidate feed the article-audience choice; if
   the attestation-community venue is ever pursued, the DSSE-shaped register
   ("shaped", not "compliant") from the claim ledger governs.
+
+## Addendum — cursory prior-art note (web check, 2026-08-16)
+
+Not architecture-relevant; positioning only. The fourth-venue space is
+already active: an in-toto `agent-decision/v0.1` predicate RFC is open
+(in-toto/attestation#554), and deny-by-default agent gates with signed,
+hash-chained audit records are common (see
+`systempromptio/awesome-ai-agent-governance`; e.g. AgentLock, Provenrail).
+Article consequence only: position within the category, don't imply novelty
+of "signed gate + verifiable audit" as such.
