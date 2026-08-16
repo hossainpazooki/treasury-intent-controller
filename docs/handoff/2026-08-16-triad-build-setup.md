@@ -122,6 +122,29 @@ uncommitted as of writing.
    deferred section — promote it into the assessment doc's queue next time
    that file is touched.
 
+## Addendum, same day (2026-08-16, later session)
+
+This brief's blockers were both answered the same day; the body above is left
+as written. Recorded here, not edited in above:
+
+1. **Gate zero: RATIFIED.** Ruling 1 adopted; plan Tasks 2–4 executed and
+   gate-green (`verifier/KIT.md`, `scripts/release.sh` + `/dist/` ignore,
+   `docs/integration.md` observability section). One correction folded in —
+   `-trimpath` alone does not reproduce; `-buildvcs=false` and
+   `-ldflags=-buildid=` are each load-bearing
+   (`docs/learnings/2026-08-16-buildid-defeats-trimpath-reproducibility.md`).
+2. **ATLAS scrub: RULED AND EXECUTED**, overturning this brief's "deferred,
+   do NOT chase" locked decision. All three categories plus the
+   private-monorepo references; zero tracked hits remain. Env vars renamed
+   with no compatibility shim by explicit ruling
+   (`docs/learnings/2026-08-16-atlas-scrub-executed.md`, which also records
+   the accepted silent-not-verify cost and a LARGER internal-reference class
+   left untouched and needing its own ruling).
+
+The `sdk-ship` branch and worktree this brief describes no longer exist —
+fast-forwarded into `main` at `89443a3` after this brief was written, so the
+`re-verify:` lines naming `sdk-ship` fail; use `main`.
+
 ```bash
 cd ~/dev/treasury-intent-controller
 # handoff + learnings only: research docs already pushed (remote head 191a13f)
