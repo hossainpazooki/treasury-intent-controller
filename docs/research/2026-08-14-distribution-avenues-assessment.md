@@ -79,3 +79,14 @@ fixture-verified against the shipped commit."
 1. Adopt the corrected ranking (1+2 co-built, 3 scoped, 4 on named demand)?
 2. Split the content channel into supply-side article + demand-side artifact?
 3. Add release-binary criteria to the ship gate; signed or checksummed?
+4. **R4 exporter placement** (added 2026-08-15, from the LangChain-vs-Datadog
+   venue discussion): when OTel emission is built, does it live in-gate or as
+   an external feed-to-OTLP exporter that tails the feed? "Trivially additive"
+   (ROADMAP R4) collides with the core's stdlib-only policy — the OTel Go SDK
+   is a heavy dependency, and hand-rolled OTLP is not "trivial". The external
+   exporter makes "logs index, gates decide" structural (the gate never learns
+   OTel exists; emission failure cannot touch decisions) and keeps the core
+   dependency-free; in-gate emission would demand tests for what the exporter
+   gets by construction. Not blocking anything today — R4 is unbuilt and the
+   near-term Datadog story (log-forward the feed) needs no SDK change — but
+   the ruling shapes avenue 4 if a Datadog/observability channel is adopted.

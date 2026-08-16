@@ -122,3 +122,8 @@ performance, or the R4 OTel story. Venue/positioning judgment was out of scope.
   working", "the worst case is an action that wrongly waits".
 - Any live-demo number ("10/10") gets re-verified in this monorepo the day
   the article cites it.
+- Platform-architect readers pattern-match "intent plane" to prompt-routing /
+  cost middleware (live external signal, 2026-08-16 consumer-signal note):
+  state early that the gate composes with routers — the router decides WHERE
+  a request goes, the gate decides WHETHER the action is authorized — and
+  that intent-plane does not route, scrub, or reduce spend.
