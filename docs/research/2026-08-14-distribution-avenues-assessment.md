@@ -90,3 +90,28 @@ fixture-verified against the shipped commit."
    gets by construction. Not blocking anything today — R4 is unbuilt and the
    near-term Datadog story (log-forward the feed) needs no SDK change — but
    the ruling shapes avenue 4 if a Datadog/observability channel is adopted.
+
+## ADDENDUM — rulings received (2026-08-18)
+
+The operator ruled on all four decisions above, plus the two
+internal-reference classes the ATLAS scrub queued
+(2026-08-16-triad-shipped brief, Open item 2). Verbatim substance:
+
+1. **Ranking: ADOPTED, with one modification** — "build the LangChain SDK
+   first and roadmap Datadog." This OVERRIDES the corrected ranking's
+   "avenue 4 on named demand" condition: the LangChain adapter is the next
+   build workstream despite the named-consumer signal being unmet; Datadog
+   is roadmapped (near-term story stays feed log-forward, no SDK change).
+2. **Content channel split: YES** — supply-side article + demand-side
+   artifact become separate lanes.
+3. **Signing: NOT FOR NOW** — checksums remain the release-integrity floor;
+   re-queue only on a new ruling.
+4. **R4 exporter placement: EXTERNAL** — feed-to-OTLP exporter tailing the
+   feed; never in-gate; core stays stdlib-only. Recorded in ROADMAP R4.
+5. **Own-ADR-number class: DE-NUMBER** — executed 2026-08-18 in the SDK
+   (CONTRACT.md migration amendment of that date).
+6. **Third-project class: RE-ARCHITECT** — executed 2026-08-18:
+   `SCORER_GOLDENS_DIR` is the wheel lane's only wiring (sibling-checkout
+   fallback removed); upstream docs described by role, not name/number.
+
+The rulings queue from this document is now EMPTY.

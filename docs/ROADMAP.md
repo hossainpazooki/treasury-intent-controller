@@ -15,7 +15,7 @@ Accepted; 0009/0010 reserved, not yet written).
 | R1 | **Standard signing envelopes** (DSSE/in-toto bridge) for attestations | **Envelopes BUILT 2026-08-04 at test grade** (`plane/envelope.go`: DSSE-shaped, PAE v1, ed25519; every signature stamped `key_authority: "test"`). Still blocked for production on ADR-0009 production key authority (RRE ADR-0025, PR #19 — verified still OPEN 2026-08-02). Test keys stay and provenance keeps saying so until it lands. **ADR-0009 scope additions (2026-08-05 whole-contract review):** (i) key CLASSES — attestation (control's), record-signing (the GATE's, for tamper-evident records; note the current `TestKeyPossessionBoundary` rule "only control imports plane/authority" must be amended per-class then, since record signing puts a key in the gate), workload identity (R2); (ii) revocation-authority semantics — today ANY trust-root key can revoke ANY spec (invisible with one key; a theory of who-may-revoke is required before a second key enters a root); (iii) the ADR-0007 exact-decimal payload trigger fires BEFORE this lands. |
 | R2 | **Workload identity** for role separation (SPIFFE-style) — makes P3 "cannot sign" a deployment-graph fact | Deployment-infrastructure decisions outside this repo. Until R2, key-possession separation is documented, never claimed "enforced". |
 | R3 | **Shadow mode as a signed authority state** — enforcement posture inside the spec payload | **BUILT 2026-08-04** behind ADR-0006 (**Proposed** — `docs/adr/2026-08-04-ADR-0006-shadow-recorded-terminal.md`; the canon bump is implemented-and-pinned but the ADR is not ratified; do not quote SHADOW_RECORDED as settled practice until it is). `enforcement_posture` lives inside the signed payload; promotion is a new attestation with a new hash (`control promote`). **Config-toggled shadow mode remains explicitly forbidden — it is a bypass.** |
-| R4 | **OTel trace emission as index** ("logs index, gates decide") | Permitted only if trivially additive; the durable record remains sole authority. Not exercised this session. |
+| R4 | **OTel trace emission as index** ("logs index, gates decide") | **Placement RULED 2026-08-18: EXTERNAL** — a feed-to-OTLP exporter that tails the feed; never in-gate (the gate never learns OTel exists; emission failure cannot touch decisions; core stays stdlib-only). Unbuilt; the near-term Datadog story (log-forward the feed) needs no SDK change. |
 
 ## Findings (recorded production-posture gaps)
 
@@ -43,5 +43,22 @@ Accepted; 0009/0010 reserved, not yet written).
    closed via §2.6; scorer-side extraction retired). Its surviving residuals:
    exact-decimal payload thresholds (hard pre-R1 trigger, ADR-0007) and
    name-shape validation in `plane.ParseSpecPayload`.
-3. CI wheel-lane job (Linux, pinned `SCORER_ATLAS_DIR`; make `_wheel_lane()`
-   skip-with-reason on absent fixture).
+3. CI wheel-lane job (Linux). SDK-side (where the lane now lives) the
+   lane's ONLY wiring since 2026-08-18 is `SCORER_GOLDENS_DIR` — the job
+   must export it; there is no sibling-checkout fallback anymore.
+   `_wheel_lane()` already skips-with-reason. NOTE: this repo's `core/scorer`
+   copy still carries the pre-rename env names (`SCORER_ATLAS_*`) — the
+   trees have diverged since the SDK's 2026-08-16 scrub; the SDK's
+   `TestInternalReferencesAbsent` pin (2026-08-18) is what stops a
+   mechanical TIC→SDK port from reverting it.
+
+## Distribution (rulings 2026-08-18, recorded in
+`docs/research/2026-08-14-distribution-avenues-assessment.md` addendum)
+
+- **Next build workstream: the LangChain adapter SDK** (operator override of
+  "avenue 4 on named demand") — born SDK-side per ADR-0011; needs its own
+  plan before code.
+- **Datadog: roadmapped** — near-term = log-forward the feed (no SDK
+  change); exporter path per R4's external ruling when adopted.
+- **Content channel: split** — supply-side article + demand-side artifact.
+- **Release signing: deferred** ("not for now") — checksums stay the floor.
