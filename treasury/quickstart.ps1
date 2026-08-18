@@ -131,6 +131,19 @@ try {
     else { $fail++; Write-Host "[FAIL] declarant SDK: rc=$d1Rc/$d2Rc out1=$d1 out2=$d2" }
     Write-Host "       why it matters: the published SDK is the embedding half of the sale - derived keys make dedup real, and the collision is classified, not mysterious"
 
+    # Probe 7 (Python declarant twin LIVE, CONTRACT.md 2.7): the same two-step
+    # through pydeclarant's stdlib Client under its OWN derived key - the
+    # twin's first live leg. A refusing step exits nonzero by design - a probe
+    # assertion, not a script abort.
+    $p7 = (& $venvPy (Join-Path $PSScriptRoot "probes\pydeclarant_live.py") $gateUrl $hash02 | Out-String).Trim()
+    $p7Rc = $LASTEXITCODE
+    $ok = ($p7Rc -eq 0) -and ($p7 -like "*class=PROCEED terminal=ACHIEVED*") -and
+          ($p7 -like "*class=ALREADY_RESERVED same_key_retry_safe=false*")
+    $p7line = $p7 -replace "`r`n", "; " -replace "`n", "; "
+    if ($ok) { $pass++; Write-Host "[PASS] Python declarant twin (live): $p7line" }
+    else { $fail++; Write-Host "[FAIL] Python declarant twin (live): rc=$p7Rc out=$p7line" }
+    Write-Host "       why it matters: the twin speaks the same wire against the live gate - the shared golden bytes are not a lab-only claim"
+
     Write-Host "[chaos] killing the scorer to prove fail-closed on outage"
     Stop-Process -Id $scorer.Id -Force
     Start-Sleep -Milliseconds 500
@@ -139,11 +152,11 @@ try {
 
     $events = Invoke-RestMethod -Uri "$gateUrl/v2/events?since=0"
     $achieved = @($events.events | Where-Object { $_.type -eq "ACHIEVED" })
-    if ($achieved.Count -eq 2) { $pass++; Write-Host "[PASS] durable feed: exactly 2 ACHIEVED records - one per authorized key - among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
-    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 2 ACHIEVED, got $($achieved.Count)" }
+    if ($achieved.Count -eq 3) { $pass++; Write-Host "[PASS] durable feed: exactly 3 ACHIEVED records - one per authorized key - among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
+    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 3 ACHIEVED, got $($achieved.Count)" }
     Write-Host "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-    # Probe 10: the recompute probe (CONTRACT.md 9.1). Both verifier twins
+    # Probe 11: the recompute probe (CONTRACT.md 9.1). Both verifier twins
     # re-derive every commitment - trajectory hashes on grants AND refusals,
     # sequence contiguity, exactly-one-ACHIEVED - from the record bytes alone,
     # and their reports must agree line-for-line. A refuting verifier exits
@@ -157,7 +170,7 @@ try {
     else { $fail++; Write-Host "[FAIL] verifier recompute: goExit=$goRc pyExit=$pyRc identical=$($goReport -eq $pyReport)"; Write-Host $goReport }
     Write-Host "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-    Write-Host ("RESULT: {0}/10 probes passed" -f $pass)
+    Write-Host ("RESULT: {0}/11 probes passed" -f $pass)
 }
 finally {
     # Reclaim on EVERY exit path - a Wait-Healthy timeout or a transport throw

@@ -254,3 +254,17 @@ func TestPollAchieved(t *testing.T) {
 		t.Fatalf("recs=%+v next=%d", recs, next)
 	}
 }
+
+// The zero-value client is BOUNDED (§2.7 client-timeout rule): a hung gate
+// hangs one call for DefaultTimeout, never the declarant forever. An
+// unbounded client must be an explicit caller opt-in via the HTTP field.
+func TestDefaultClientIsBounded(t *testing.T) {
+	c := &Client{}
+	if got := c.httpClient().Timeout; got != DefaultTimeout {
+		t.Fatalf("zero-value client timeout = %v, want DefaultTimeout (%v)", got, DefaultTimeout)
+	}
+	unbounded := &Client{HTTP: &http.Client{}}
+	if got := unbounded.httpClient().Timeout; got != 0 {
+		t.Fatalf("caller-supplied client must be honored verbatim, got timeout %v", got)
+	}
+}

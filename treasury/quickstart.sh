@@ -153,16 +153,32 @@ else
 fi
 echo "       why it matters: the published SDK is the embedding half of the sale - derived keys make dedup real, and the collision is classified, not mysterious"
 
+# Probe 7 (Python declarant twin LIVE, CONTRACT.md 2.7): the same two-step
+# through pydeclarant's stdlib Client under its OWN derived key - the twin's
+# first live leg. A refusing step exits nonzero by design - a probe
+# assertion, not a script abort.
+p7_rc=0; p7=$("$venv_py" "$here/probes/pydeclarant_live.py" "$gate_url" "$hash02") || p7_rc=$?
+case "$p7" in
+    *"class=PROCEED terminal=ACHIEVED"*"class=ALREADY_RESERVED same_key_retry_safe=false"*) p7_ok=1;;
+    *) p7_ok=0;;
+esac
+if [ "$p7_rc" -eq 0 ] && [ "$p7_ok" = 1 ]; then
+    pass=$((pass + 1)); echo "[PASS] Python declarant twin (live): $(printf '%s' "$p7" | tr '\n' ';')"
+else
+    fail=$((fail + 1)); echo "[FAIL] Python declarant twin (live): rc=$p7_rc out=$(printf '%s' "$p7" | tr '\n' ';')"
+fi
+echo "       why it matters: the twin speaks the same wire against the live gate - the shared golden bytes are not a lab-only claim"
+
 echo "[chaos] killing the scorer to prove fail-closed on outage"
 kill "$scorer_pid"; sleep 1
 probe "declare during scorer outage" 04-outage.json "$hash02" FAILED unevaluable "an unreachable scorer denies - unevaluable NEVER collapses into a pass"
 probe "attested-but-thin spec" 05-empty-criteria.json "$hash05" FAILED unevaluable:empty-criteria "thin-spec defense - attestation does not launder vacuity; zero criteria still refuse"
 
 achieved=$(curl -fsS "$gate_url/v2/events?since=0" | "$venv_py" -c "import json,sys; e=json.load(sys.stdin)['events']; print(sum(1 for r in e if r['type']=='ACHIEVED'))")
-if [ "$achieved" = "2" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 2 ACHIEVED records - one per authorized key, never a duplicate"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 2 ACHIEVED, got $achieved"; fi
+if [ "$achieved" = "3" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 3 ACHIEVED records - one per authorized key, never a duplicate"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 3 ACHIEVED, got $achieved"; fi
 echo "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-# Probe 10: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
+# Probe 11: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
 # every commitment - trajectory hashes on grants AND refusals, sequence
 # contiguity, exactly-one-ACHIEVED - from the record bytes alone, and their
 # reports must be byte-identical. `set -e` is suspended around the calls: a
@@ -178,5 +194,5 @@ else
 fi
 echo "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-echo "RESULT: $pass/10 probes passed"
+echo "RESULT: $pass/11 probes passed"
 [ "$fail" -eq 0 ]

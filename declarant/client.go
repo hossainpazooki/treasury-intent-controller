@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 // Terminal is the synchronous declaration response (§2.2 intentResponse).
@@ -47,8 +48,15 @@ type Result struct {
 	FeedRecords   []Record
 }
 
+// DefaultTimeout bounds one declarant HTTP call when the caller supplies no
+// client of their own (§2.7 client-timeout rule): a hung gate hangs the one
+// call, never the declarant forever. An unbounded client is an explicit
+// caller opt-in via HTTP, never the default.
+const DefaultTimeout = 30 * time.Second
+
 // Client is the declarant's wire client. BaseURL is the gate's origin
-// (e.g. "http://127.0.0.1:8080"); HTTP nil means http.DefaultClient.
+// (e.g. "http://127.0.0.1:8080"); HTTP nil means a client bounded by
+// DefaultTimeout.
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
@@ -58,7 +66,7 @@ func (c *Client) httpClient() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return http.DefaultClient
+	return &http.Client{Timeout: DefaultTimeout}
 }
 
 // Declare POSTs one declaration and classifies the outcome (§2.7).
