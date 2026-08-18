@@ -609,13 +609,19 @@ synchronous `Proceed`; every other class — `ShadowRecorded`,
 HISTORICAL: the consequence already fired once and is never re-fired) —
 raises a structured refusal carrying the class and the same-key-retry
 position, and the tool function is never called. Each invocation declares
-under its OWN intent (episode seed derived per-call from the idempotency
-key), so the consult can never authorize one call with another call's
-terminal. Canonicalization is a fixed recipe (pydantic
+under its OWN, FRESH intent (episode seed = idempotency key + a fresh
+per-invocation nonce — same-key retries are same-key/fresh-episode, the
+probe-6 pattern; a reused seed replays `intent_seq` 0 under one intent id
+and the verifier REFUTES the feed on sequence contiguity, found live
+2026-08-18), so no intent id is ever redeclared and the consult can never
+authorize one call with another call's terminal. Canonicalization is a fixed recipe (pydantic
 `model_dump(mode="json")` recursively, then sorted-key compact JSON of the
 schema-validated kwargs); non-keyword (string) input is refused before any
-declaration. Optional: hosts without `langchain_core` (this monorepo's
-venv today) skip its tests visibly and lose nothing else.
+declaration. Optional: hosts without `langchain_core` skip its tests
+visibly and lose nothing else; this monorepo's venv carries it since
+2026-08-18, so the full adapter lane runs here, and the adapter's LIVE leg
+is quickstart probe 8 (a gated tool executes once on a live `Proceed`; the
+same-args call raises `ALREADY_RESERVED` with the tool body not re-fired).
 
 ---
 
@@ -1024,7 +1030,7 @@ non-vacuous by mutating a COPY of the tree and watching it go red.
 | 11 | Stable-once / volatile-twice crosses the wire: a counting `httptest` scorer sees exactly one `declaration` call per criterion and exactly one extra `dispatch` call per volatile criterion. | `TestStableOnceVolatileTwiceAcrossWire`. Mutant: drop the phase guard. |
 | 12 | Live outage refuses, never grants. | Two-process probe: gate `ACHIEVED` with the service up and facts passing; kill the service; the same intent (fresh key) ⟹ `FAILED`, `unevaluable:<criterion>`, no ACHIEVED record in the feed. The kill is real (`taskkill` / `kill`), not mocked. |
 | 13 | Refusal-hash commitment: the terminal-position record of EVERY completed authorization carries `trajectory_hash`, it recomputes from the per-intent records, and no non-terminal record carries one. | `go test ./core/internal/gate -run TerminalHash` — drive one intent per terminal class (ACHIEVED, SHADOW_RECORDED, criteria-FAILED, volatile-recheck, idempotency-collision, and a step-1 refusal) and assert the hash placement + recompute. Mutant: stamp the hash one event early. |
-| 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus quickstart probe 11 (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
+| 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus quickstart probe 12 (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
 | 15 | Declarant discipline (§2.7): the SDK marshals exactly the declarant-owned §2.2 fields (golden request bytes), `force_scores` exists in no declarant type, terminal classification is total with a fail-closed `Unknown`, and the 500 edge consults the per-intent feed before deciding. | `go test ./declarant -count=1` — golden-bytes marshal test; classification table test covering every §3.2/§3.3 cause class AND an out-of-vocabulary reason; an `httptest` 500-edge test proving the feed consult precedes the decision. Mutant: drop the `Unknown` fallback (default to retry) → classification test red. Python twin (2026-08-18): `python -m pytest declarant/pydeclarant` — the SAME golden bytes byte-compared, the same classification totality incl. out-of-vocabulary, and an in-process-HTTP 500-edge call-order proof. Live: quickstart probe 6 (Go SDK: declare ⟹ `PROCEED`; re-declare same key ⟹ `ALREADY_RESERVED`) and probe 7 (the Python twin's `Client`, same two-step under its own derived key). |
 | 16 | Maker-checker chassis, end to end (2026-08-12): authoring routes every provision (criterion / human-judgment / named unknown), pins each to the sha256 of its EXACT passage and defaults a new draft to shadow; the attested bytes ARE the executed bytes (envelope payload byte-identical to the draft file, its hash is the content address, store resolution returns the same payload with the human-judgment entry intact — attestation launders nothing); promotion is a NEW authority act (new hash, only `enforcement_posture` differs, the shadow artifact's stored bytes untouched, §2.6); revocation kills exactly the revoked artifact, and the promoted sibling still resolves. | `go test ./treasury -count=1` — `TestMakerCheckerFlow` execs the REAL seat binaries built by `TestMain` (author → keygen → root → attest → publish → promote → revoke), with each refusal edge at its natural point in the chain (second keygen refused, foreign-root publish refused, double promotion refused); `TestAuthoringRefusals` covers empty passage, criterion+judgment both, unknown source field, invalid posture. Mutants (all three run 2026-08-12, each red for its own reason): drop the `SourcePins` append ⟹ pin assertion; make promote re-attest the pre-flip bytes ⟹ "promotion did not change the content address"; delete the keygen overwrite refusal ⟹ second-keygen assertion. |
 

@@ -34,7 +34,7 @@ drafts in `specs/` — builds and boots the gate with `INTENT_SCORER_URL` and
 `INTENT_TRUST_ROOT`, runs the probe ladder (including a live signed
 revocation, the declarant-SDK consumption probe, and the verifier-twin
 recompute), and tears everything down. Expected final line:
-`RESULT: 11/11 probes passed` — every probe asserts its terminal, so the
+`RESULT: 12/12 probes passed` — every probe asserts its terminal, so the
 demo doubles as a smoke gate.
 
 ## The probe ladder
@@ -48,10 +48,11 @@ demo doubles as a smoke gate.
 | 5 | Revoke the within-limits spec (signed tombstone), declare against it | `FAILED` `revoked:quickstart-pull` | authority is revocable; the tombstone's ref is witnessed |
 | 6 | Declare through the published declarant SDK (`bin/intent-declare`, derived deterministic key), then repeat with the SAME derived key | first: `class=PROCEED terminal=ACHIEVED`, exit 0; second: `class=ALREADY_RESERVED`, `same_key_retry_safe=false`, exit 1 | the embedding half of the two-sided sale runs live: derived keys make dedup real, and a collision is classified, not mysterious (§2.7) |
 | 7 | Declare through the Python declarant twin (`declarant/pydeclarant`'s `Client`, its own derived key), then repeat with the SAME key | first: `class=PROCEED terminal=ACHIEVED`; second: `class=ALREADY_RESERVED`, `same_key_retry_safe=false` | the twin's first LIVE leg (2026-08-18): the shared golden bytes speak the same wire against the real gate, not only in a lab byte-compare (§2.7) |
-| 8 | Kill the scorer, declare again | `FAILED` `unevaluable:` | fail-closed on outage, demonstrated live |
-| 9 | Declare an attested-but-thin spec (zero criteria) | `FAILED` `unevaluable:empty-criteria` | attestation does not launder vacuity |
-| 10 | Read `GET /v2/events?since=0` | exactly three `ACHIEVED` — one per authorized key | emit-and-observe: consumers settle only from the feed, and no key ever settles twice |
-| 11 | Run BOTH verifier twins (`bin/intent-verify` + `verifier/pyverifier/verify.py`) over the live `events.jsonl` | `RESULT: VERIFIED`, exit 0, reports byte-identical | an independent examiner re-derives every commitment — trajectory hashes on grants AND refusals, sequence contiguity, exactly-one-ACHIEVED — from the record bytes alone, with no trust in the gate |
+| 8 | Invoke a LangChain tool wrapped by `gate_tool` (the adapter), then repeat with the SAME args | first: tool body executes exactly once, result returned; second: `IntentRefused` `class=ALREADY_RESERVED`, body NOT re-fired | the adapter's LIVE leg (2026-08-18): a wrapped agent tool fires its consequence exactly once, and a refusal is a classified outcome, not an exception to debug. Its first live run was 11/12 — the verifier refuted a reused episode seed the lab double could not see (`docs/learnings/2026-08-18-live-verifier-refutes-adapter-seed-reuse.md`) |
+| 9 | Kill the scorer, declare again | `FAILED` `unevaluable:` | fail-closed on outage, demonstrated live |
+| 10 | Declare an attested-but-thin spec (zero criteria) | `FAILED` `unevaluable:empty-criteria` | attestation does not launder vacuity |
+| 11 | Read `GET /v2/events?since=0` | exactly four `ACHIEVED` — one per authorized key | emit-and-observe: consumers settle only from the feed, and no key ever settles twice |
+| 12 | Run BOTH verifier twins (`bin/intent-verify` + `verifier/pyverifier/verify.py`) over the live `events.jsonl` | `RESULT: VERIFIED`, exit 0, reports byte-identical | an independent examiner re-derives every commitment — trajectory hashes on grants AND refusals, sequence contiguity, exactly-one-ACHIEVED — from the record bytes alone, with no trust in the gate |
 
 `force_scores` (the guarded test affordance) is deliberately absent from this
 showcase — the gate here boots WITHOUT `INTENT_UNSAFE_FORCE_SCORES`, so the

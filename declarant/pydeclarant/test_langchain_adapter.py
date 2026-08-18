@@ -50,11 +50,15 @@ RUN_ID = "run-lc-1"
 
 class _Script:
     """Per-test script: declare responses consumed in order; feed responses
-    keyed by intent id. Captures every (method, path, body)."""
+    keyed by intent id. Captures every (method, path, body). own_feed, when
+    set, is served for the intent id of the LAST POSTed episode_seed --
+    "the calling invocation's own intent" without knowing the fresh nonce
+    up front."""
 
-    def __init__(self, declare_responses, feeds=None):
+    def __init__(self, declare_responses, feeds=None, own_feed=None):
         self.declare_responses = list(declare_responses)
         self.feeds = dict(feeds or {})
+        self.own_feed = own_feed
         self.calls = []  # (method, path, body-bytes-or-None)
 
 
@@ -75,6 +79,11 @@ def _serve(script):
             script.calls.append(("GET", self.path, None))
             iid = self.path.split("/")[3] if self.path.startswith("/v2/intents/") else ""
             events = script.feeds.get(iid, [])
+            if script.own_feed is not None:
+                posts = [c for c in script.calls if c[0] == "POST"]
+                own = intent_id(json.loads(posts[-1][2])["episode_seed"]) if posts else ""
+                if iid == own:
+                    events = script.own_feed
             data = json.dumps({"events": events}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -141,16 +150,23 @@ def test_proceed_executes_once_and_wire_bytes_match_marshal():
     assert out == "moved 100.00 beta"
     assert counted.calls == 1
     key = _expected_key("sample_transfer", {"amount": "100.00", "unit": "beta"})
+    posts = [c for c in script.calls if c[0] == "POST"]
+    assert len(posts) == 1 and posts[0][1] == "/v2/intents"
+    posted = json.loads(posts[0][2])
+    assert posted["idempotency_key"] == key
+    seed = posted["episode_seed"]
+    # Fresh intent per invocation: the seed carries the key plus a nonce,
+    # never the bare key (a bare-key seed redeclares the intent id on a
+    # same-args retry -- the live verifier refuted that, 2026-08-18).
+    assert seed.startswith(key + "-") and len(seed) > len(key) + 1
     want = marshal_request(
         Request(
-            episode_seed=key,
+            episode_seed=seed,
             idempotency_key=key,
             intent_spec_hash=SPEC_HASH,
             idempotency_scope=SCOPE,
         )
     )
-    posts = [c for c in script.calls if c[0] == "POST"]
-    assert len(posts) == 1 and posts[0][1] == "/v2/intents"
     assert posts[0][2] == want  # byte-exact: the adapter speaks marshal_request's wire
 
 
@@ -204,6 +220,11 @@ def test_key_determinism_same_args_same_key_changed_args_different_key():
         server.shutdown()
     assert _posted_key(script, 0) == _posted_key(script, 1)
     assert _posted_key(script, 0) != _posted_key(script, 2)
+    # Same key, NEVER the same episode seed: same-args retries are
+    # same-key/fresh-episode (section 2.7), so no intent id is redeclared.
+    seeds = [json.loads(script.calls[i][2])["episode_seed"] for i in (0, 1)]
+    assert seeds[0] != seeds[1]
+    assert intent_id(seeds[0]) != intent_id(seeds[1])
 
 
 class Leg(BaseModel):
@@ -258,19 +279,9 @@ def test_async_delegates_through_the_gate():
 def test_500_consult_carries_the_calling_invocations_own_intent_id():
     counted = _Counted()
     tool_obj = counted.make()
-    key1 = _expected_key("sample_transfer", {"amount": "1", "unit": "beta"})
-    achieved_record = {
-        "type": "ACHIEVED",
-        "detail": "",
-        "intent_seq": 4,
-        "trajectory_hash": "aa" * 32,
-        "idempotency_key": key1,
-    }
-    # call 1's intent has an ACHIEVED record; call 2's feed is EMPTY.
-    script = _Script(
-        [(200, ACHIEVED_BODY), (500, {})],
-        feeds={intent_id(key1): [achieved_record]},
-    )
+    # No feed entries at all: whatever the consult finds, it must be looking
+    # under call 2's OWN fresh intent id -- and finding nothing, refuse.
+    script = _Script([(200, ACHIEVED_BODY), (500, {})])
     server, url = _serve(script)
     try:
         g = _gated(url, tool_obj)
@@ -281,13 +292,15 @@ def test_500_consult_carries_the_calling_invocations_own_intent_id():
         server.shutdown()
     assert counted.calls == 1  # call 2 never executed
     assert exc.value.class_ == INDETERMINATE
-    key2 = _expected_key("sample_transfer", {"amount": "2", "unit": "beta"})
+    posts = [c for c in script.calls if c[0] == "POST"]
+    seed1 = json.loads(posts[0][2])["episode_seed"]
+    seed2 = json.loads(posts[1][2])["episode_seed"]
     gets = [c for c in script.calls if c[0] == "GET"]
     assert len(gets) == 1
-    # The consult URL must carry call 2's OWN intent id -- a wrap-time-seed
+    # The consult URL must carry call 2's OWN intent id -- a shared-seed
     # implementation consults call 1's id here and inherits its terminal.
-    assert intent_id(key2) in gets[0][1]
-    assert intent_id(key1) not in gets[0][1]
+    assert intent_id(seed2) in gets[0][1]
+    assert intent_id(seed1) not in gets[0][1]
 
 
 # --- historical Proceed never re-fires the consequence -----------------------
@@ -300,18 +313,16 @@ def test_same_key_retry_500_with_own_achieved_refuses_not_reexecutes():
     # would break at-most-once at the adapter layer. Refuse, never re-run.
     counted = _Counted()
     tool_obj = counted.make()
-    key = _expected_key("sample_transfer", {"amount": "9", "unit": "beta"})
     own_achieved = {
         "type": "ACHIEVED",
         "detail": "",
         "intent_seq": 7,
         "trajectory_hash": "cc" * 32,
-        "idempotency_key": key,
     }
-    script = _Script(
-        [(200, ACHIEVED_BODY), (500, {})],
-        feeds={intent_id(key): [own_achieved]},
-    )
+    # own_feed serves this record for the LAST POSTed seed's intent id --
+    # i.e. the retrying invocation's OWN intent shows a committed ACHIEVED
+    # (the lost-response case).
+    script = _Script([(200, ACHIEVED_BODY), (500, {})], own_feed=[own_achieved])
     server, url = _serve(script)
     try:
         g = _gated(url, tool_obj)
@@ -349,7 +360,7 @@ def test_adapter_import_graph_is_tree_local():
     import pathlib
 
     src = (pathlib.Path(__file__).parent / "langchain_adapter.py").read_text(encoding="utf-8")
-    allowed = {"__future__", "json", "langchain_core", "client", "declare"}
+    allowed = {"__future__", "json", "uuid", "langchain_core", "client", "declare"}
     for line in src.splitlines():
         s = line.strip()
         if s.startswith("import ") or s.startswith("from "):

@@ -60,6 +60,15 @@ if [ ! -x "$venv_py" ]; then
     fi
 fi
 
+# The adapter probe (probe 8) needs langchain-core; bootstrap it one-time.
+# The system-python3 fallback may be PEP 668 externally-managed -- a
+# user-site install is the contained escape hatch there.
+if ! "$venv_py" -c 'import langchain_core' 2>/dev/null; then
+    echo "[setup] installing langchain-core for the adapter probe (one-time)"
+    "$venv_py" -m pip install -q langchain-core 2>/dev/null || \
+        "$venv_py" -m pip install --user --break-system-packages -q langchain-core
+fi
+
 echo "[boot] scorer with treasury facts (balance=250, fx_rate=1.30)"
 SCORER_FACTS_JSON=$(cat "$here/facts.json") SCORER_PORT=$scorer_port "$venv_py" -m scorer &
 scorer_pid=$!
@@ -169,16 +178,31 @@ else
 fi
 echo "       why it matters: the twin speaks the same wire against the live gate - the shared golden bytes are not a lab-only claim"
 
+# Probe 8 (LangChain adapter LIVE, CONTRACT.md 2.7 framework adapter): a
+# gated tool executes once on a live Proceed; the same-args call refuses
+# ALREADY_RESERVED with the tool body not re-fired.
+p8_rc=0; p8=$("$venv_py" "$here/probes/adapter_live.py" "$gate_url" "$hash02") || p8_rc=$?
+case "$p8" in
+    *"executed=1 result=moved 25 alpha"*"refused class=ALREADY_RESERVED same_key_retry_safe=false executed=1"*) p8_ok=1;;
+    *) p8_ok=0;;
+esac
+if [ "$p8_rc" -eq 0 ] && [ "$p8_ok" = 1 ]; then
+    pass=$((pass + 1)); echo "[PASS] LangChain adapter (live): $(printf '%s' "$p8" | tr '\n' ';')"
+else
+    fail=$((fail + 1)); echo "[FAIL] LangChain adapter (live): rc=$p8_rc out=$(printf '%s' "$p8" | tr '\n' ';')"
+fi
+echo "       why it matters: a wrapped agent tool fires its consequence exactly once, and a refusal is a classified outcome - not an exception to debug"
+
 echo "[chaos] killing the scorer to prove fail-closed on outage"
 kill "$scorer_pid"; sleep 1
 probe "declare during scorer outage" 04-outage.json "$hash02" FAILED unevaluable "an unreachable scorer denies - unevaluable NEVER collapses into a pass"
 probe "attested-but-thin spec" 05-empty-criteria.json "$hash05" FAILED unevaluable:empty-criteria "thin-spec defense - attestation does not launder vacuity; zero criteria still refuse"
 
 achieved=$(curl -fsS "$gate_url/v2/events?since=0" | "$venv_py" -c "import json,sys; e=json.load(sys.stdin)['events']; print(sum(1 for r in e if r['type']=='ACHIEVED'))")
-if [ "$achieved" = "3" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 3 ACHIEVED records - one per authorized key, never a duplicate"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 3 ACHIEVED, got $achieved"; fi
+if [ "$achieved" = "4" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 4 ACHIEVED records - one per authorized key, never a duplicate"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 4 ACHIEVED, got $achieved"; fi
 echo "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-# Probe 11: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
+# Probe 12: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
 # every commitment - trajectory hashes on grants AND refusals, sequence
 # contiguity, exactly-one-ACHIEVED - from the record bytes alone, and their
 # reports must be byte-identical. `set -e` is suspended around the calls: a
@@ -194,5 +218,5 @@ else
 fi
 echo "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-echo "RESULT: $pass/11 probes passed"
+echo "RESULT: $pass/12 probes passed"
 [ "$fail" -eq 0 ]

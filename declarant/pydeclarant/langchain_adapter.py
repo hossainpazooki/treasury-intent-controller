@@ -15,6 +15,7 @@ tests skip visibly where it is absent).
 from __future__ import annotations
 
 import json
+import uuid
 
 from langchain_core.tools import StructuredTool
 
@@ -94,10 +95,13 @@ def gate_tool(tool, client: Client, *, intent_spec_hash: str,
               scope: str, run_id: str) -> StructuredTool:
     """Wrap a LangChain tool so every invocation is gated.
 
-    Each invocation declares under its OWN intent: the episode seed is the
-    derived idempotency key itself, so the client's 500-edge feed consult
-    reads the calling intent's records -- never another call's -- and a
-    same-key retry correctly consults its own intent.
+    Each invocation declares under its OWN, FRESH intent: the episode seed
+    is the derived idempotency key plus a fresh per-invocation nonce.
+    Same-key retries are same-key/fresh-episode (section 2.7) -- a REUSED
+    seed would redeclare one intent id, replay intent_seq 0 under it, and
+    make the verifier refute the whole feed on sequence contiguity (found
+    live, 2026-08-18). The fresh seed also scopes the client's 500-edge
+    feed consult to this invocation's own records, never another call's.
     """
 
     def gated(*args, **kwargs):
@@ -113,7 +117,7 @@ def gate_tool(tool, client: Client, *, intent_spec_hash: str,
             )
         key = derive_key(scope, run_id, tool.name, canonical_args(kwargs))
         res = client.declare(Request(
-            episode_seed=key,  # per-call intent, derived from the key
+            episode_seed=key + "-" + uuid.uuid4().hex,  # fresh intent per invocation, never a reused id
             idempotency_key=key,
             intent_spec_hash=intent_spec_hash,
             idempotency_scope=scope,

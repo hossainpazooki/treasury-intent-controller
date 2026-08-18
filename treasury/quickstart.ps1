@@ -34,6 +34,14 @@ try {
         & $venvPy -m pip install -q -e ((Join-Path $repo "core\scorer") + "[dev]")
     }
 
+    # The adapter probe (probe 8) needs langchain-core; bootstrap it one-time.
+    & $venvPy -c "import langchain_core" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[setup] installing langchain-core for the adapter probe (one-time)"
+        & $venvPy -m pip install -q langchain-core
+        if ($LASTEXITCODE -ne 0) { throw "langchain-core install failed" }
+    }
+
     Write-Host "[boot] scorer with treasury facts (balance=250, fx_rate=1.30)"
     $env:SCORER_FACTS_JSON = Get-Content (Join-Path $PSScriptRoot "facts.json") -Raw
     $env:SCORER_PORT = "$scorerPort"
@@ -144,6 +152,18 @@ try {
     else { $fail++; Write-Host "[FAIL] Python declarant twin (live): rc=$p7Rc out=$p7line" }
     Write-Host "       why it matters: the twin speaks the same wire against the live gate - the shared golden bytes are not a lab-only claim"
 
+    # Probe 8 (LangChain adapter LIVE, CONTRACT.md 2.7 framework adapter): a
+    # gated tool executes once on a live Proceed; the same-args call refuses
+    # ALREADY_RESERVED with the tool body not re-fired.
+    $p8 = (& $venvPy (Join-Path $PSScriptRoot "probes\adapter_live.py") $gateUrl $hash02 | Out-String).Trim()
+    $p8Rc = $LASTEXITCODE
+    $ok = ($p8Rc -eq 0) -and ($p8 -like "*executed=1 result=moved 25 alpha*") -and
+          ($p8 -like "*refused class=ALREADY_RESERVED same_key_retry_safe=false executed=1*")
+    $p8line = $p8 -replace "`r`n", "; " -replace "`n", "; "
+    if ($ok) { $pass++; Write-Host "[PASS] LangChain adapter (live): $p8line" }
+    else { $fail++; Write-Host "[FAIL] LangChain adapter (live): rc=$p8Rc out=$p8line" }
+    Write-Host "       why it matters: a wrapped agent tool fires its consequence exactly once, and a refusal is a classified outcome - not an exception to debug"
+
     Write-Host "[chaos] killing the scorer to prove fail-closed on outage"
     Stop-Process -Id $scorer.Id -Force
     Start-Sleep -Milliseconds 500
@@ -152,11 +172,11 @@ try {
 
     $events = Invoke-RestMethod -Uri "$gateUrl/v2/events?since=0"
     $achieved = @($events.events | Where-Object { $_.type -eq "ACHIEVED" })
-    if ($achieved.Count -eq 3) { $pass++; Write-Host "[PASS] durable feed: exactly 3 ACHIEVED records - one per authorized key - among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
-    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 3 ACHIEVED, got $($achieved.Count)" }
+    if ($achieved.Count -eq 4) { $pass++; Write-Host "[PASS] durable feed: exactly 4 ACHIEVED records - one per authorized key - among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
+    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 4 ACHIEVED, got $($achieved.Count)" }
     Write-Host "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-    # Probe 11: the recompute probe (CONTRACT.md 9.1). Both verifier twins
+    # Probe 12: the recompute probe (CONTRACT.md 9.1). Both verifier twins
     # re-derive every commitment - trajectory hashes on grants AND refusals,
     # sequence contiguity, exactly-one-ACHIEVED - from the record bytes alone,
     # and their reports must agree line-for-line. A refuting verifier exits
@@ -170,7 +190,7 @@ try {
     else { $fail++; Write-Host "[FAIL] verifier recompute: goExit=$goRc pyExit=$pyRc identical=$($goReport -eq $pyReport)"; Write-Host $goReport }
     Write-Host "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-    Write-Host ("RESULT: {0}/11 probes passed" -f $pass)
+    Write-Host ("RESULT: {0}/12 probes passed" -f $pass)
 }
 finally {
     # Reclaim on EVERY exit path - a Wait-Healthy timeout or a transport throw

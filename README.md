@@ -236,7 +236,7 @@ agree byte-for-byte — 10 probes):
     # Linux / macOS / WSL
     ./treasury/quickstart.sh
 
-Expected final line: `RESULT: 11/11 probes passed`. The narrative, the probe
+Expected final line: `RESULT: 12/12 probes passed`. The narrative, the probe
 ladder, and the extended demonstration (signed-artifact verification,
 settlement consumption) are documented in `treasury/README.md`.
 
@@ -318,7 +318,7 @@ smoke over the real gate and the real scorer:
 ```bash
 powershell -File treasury\quickstart.ps1   # Windows
 ./treasury/quickstart.sh                   # Linux / macOS / WSL
-# expected final line: RESULT: 11/11 probes passed
+# expected final line: RESULT: 12/12 probes passed
 ```
 
 ## Status
