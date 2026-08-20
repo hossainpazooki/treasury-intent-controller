@@ -227,16 +227,18 @@ a SIGNED spec, idempotency collision, a binding criterion, an unattested-hash
 refusal, a signed revocation, a live scorer outage (fail-closed), the
 attested-but-thin refusal, the declarant-SDK consumption probe (declare
 through the published `declarant/` package: derived key ⇒ `PROCEED`,
-same-key re-declare ⇒ `ALREADY_RESERVED`), and the recompute probe (BOTH
-verifier twins re-derive every commitment from the feed bytes alone and must
-agree byte-for-byte — 10 probes):
+same-key re-declare ⇒ `ALREADY_RESERVED`), the LangChain and MCP live legs
+(a gated tool, a gated MCP server, and a gated proxy each fire their
+consequence exactly once), and the recompute probe (BOTH verifier twins
+re-derive every commitment from the feed bytes alone and must agree
+byte-for-byte — 14 probes):
 
     # Windows
     powershell -File treasury\quickstart.ps1
     # Linux / macOS / WSL
     ./treasury/quickstart.sh
 
-Expected final line: `RESULT: 12/12 probes passed`. The narrative, the probe
+Expected final line: `RESULT: 14/14 probes passed`. The narrative, the probe
 ladder, and the extended demonstration (signed-artifact verification,
 settlement consumption) are documented in `treasury/README.md`.
 
@@ -318,7 +320,7 @@ smoke over the real gate and the real scorer:
 ```bash
 powershell -File treasury\quickstart.ps1   # Windows
 ./treasury/quickstart.sh                   # Linux / macOS / WSL
-# expected final line: RESULT: 12/12 probes passed
+# expected final line: RESULT: 14/14 probes passed
 ```
 
 ## Status
