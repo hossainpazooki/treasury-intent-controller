@@ -38,9 +38,13 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # noqa: A002 - stdlib signature
         pass  # keep the test console clean/ASCII; no per-request logging
 
-    def _reply(self, status: int, body: bytes) -> None:
+    def _reply(self, status: int, body: bytes, headers: dict | None = None) -> None:
+        # headers is optional so a route can answer a 3xx with a Location
+        # (the redirect test); every other route passes a 2-tuple as before.
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -50,22 +54,63 @@ class _Handler(BaseHTTPRequestHandler):
         self.rfile.read(length)  # discard the marshaled request body
         if self.path == "/v2/intents":
             self.calls.append("POST /v2/intents")
-            status, body = self.routes.get("post_intents", (404, b"{}"))
-            self._reply(status, body)
+            self._reply(*self.routes.get("post_intents", (404, b"{}")))
         else:
             self._reply(404, b"{}")
 
     def do_GET(self):
         if self.path.startswith("/v2/intents/") and self.path.endswith("/events"):
             self.calls.append("GET " + self.path)
-            status, body = self.routes.get("get_events", (404, b"{}"))
-            self._reply(status, body)
+            self._reply(*self.routes.get("get_events", (404, b"{}")))
         elif self.path.startswith("/v2/events"):
             self.calls.append("GET " + self.path)
-            status, body = self.routes.get("poll_events", (404, b"{}"))
-            self._reply(status, body)
+            self._reply(*self.routes.get("poll_events", (404, b"{}")))
         else:
             self._reply(404, b"{}")
+
+
+_ACHIEVED_200 = json.dumps(
+    {"terminal": "ACHIEVED", "reason": "", "trajectory_hash": "aa", "achieved_seq": 7}
+).encode("utf-8")
+
+
+class _OtherOrigin(BaseHTTPRequestHandler):
+    """The redirect target: answers ANY request with an ACHIEVED-shaped 200
+    and records what it actually received (method, path, body length)."""
+
+    seen: list = []
+
+    def log_message(self, format, *args):  # noqa: A002 - stdlib signature
+        pass
+
+    def _record_and_reply(self):
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(length) if length else b""
+        self.seen.append("%s %s body=%d" % (self.command, self.path, len(body)))
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(_ACHIEVED_200)))
+        self.end_headers()
+        self.wfile.write(_ACHIEVED_200)
+
+    do_GET = _record_and_reply
+    do_POST = _record_and_reply
+
+
+@contextmanager
+def _running_other_origin():
+    """Second origin on its own ephemeral port; yields (base_url, seen)."""
+    seen: list = []
+    handler_cls = type("_RecordingOtherOrigin", (_OtherOrigin,), {"seen": seen})
+    server = HTTPServer(("127.0.0.1", 0), handler_cls)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield ("http://127.0.0.1:%d" % server.server_address[1], seen)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 @contextmanager
@@ -169,6 +214,40 @@ def test_declare_500_feed_unreachable_is_indeterminate():
         res = client.declare(golden_request())
     assert res.class_ == INDETERMINATE
     assert res.feed_consulted is False
+
+
+def test_declare_redirect_is_never_followed():
+    # Section 2.7 redirect rule (2026-08-20), mirror of Go
+    # TestDeclareRedirectIsNeverFollowed. Following a 301/302/303 answer to
+    # the declaration downgrades the POST to a body-less GET: the redirect
+    # target never receives the declaration, yet its ACHIEVED-shaped 200
+    # would be read back as a FRESH synchronous authorization - the action
+    # fires having never been declared. 307/308 preserve the body and so
+    # were never the hole, but every 3xx is declined uniformly: a redirect
+    # is not an authorization, and there is no special case to get wrong.
+    iid = intent_id("golden-episode")
+    feed_body = json.dumps({"intent_id": iid, "events": []}).encode("utf-8")
+    for code in (301, 302, 303, 307, 308):
+        with _running_other_origin() as (other_url, seen):
+            routes = {
+                "post_intents": (code, b"", {"Location": other_url + "/elsewhere"}),
+                # The gate's own feed is reachable but holds nothing that
+                # decides: the consult runs, and still nothing authorizes.
+                "get_events": (200, feed_body),
+            }
+            with _running_server(routes) as (client, calls):
+                res = client.declare(golden_request())
+        assert res.class_ != PROCEED, "a %d classified PROCEED - an undeclared action would fire" % code
+        assert res.class_ == INDETERMINATE, "a %d must fail closed: %r" % (code, res.class_)
+        assert res.same_key_retry_safe is False
+        assert res.terminal is None
+        assert res.http_status == code, "the redirect was followed (status %r)" % res.http_status
+        assert res.feed_consulted is True, "a 3xx is an unexpected status: consult precedes the decision"
+        assert seen == [], (
+            "the redirect target was contacted (%r) - it never received the "
+            "declaration, so its 200 is not an authorization" % seen
+        )
+        assert calls == ["POST /v2/intents", "GET /v2/intents/" + iid + "/events"]
 
 
 def test_poll_achieved():

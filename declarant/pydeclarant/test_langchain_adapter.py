@@ -1,5 +1,7 @@
 """Tests for the LangChain framework adapter (CONTRACT.md section 2.7,
-"Framework adapter"; section 5.4 claim 16).
+"Framework adapter"; claim 16 of the published SDK's section 5.4 table --
+claim numbers differ between the two repos by design; section 2.7 resolves
+in both).
 
 Skips VISIBLY where langchain_core is absent -- the adapter is optional and
 a skipped adapter test is never a green one. Everything else runs against
@@ -12,8 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
@@ -39,65 +39,11 @@ from declare import (
     Request,
 )
 from langchain_adapter import ALREADY_ACHIEVED, IntentRefused, canonical_args, gate_tool
+from _gate_double import _Script, _serve
 
 SPEC_HASH = "ab" * 32
 SCOPE = "per-actor"
 RUN_ID = "run-lc-1"
-
-
-# --- gate double: scripted responses, full capture ---------------------------
-
-
-class _Script:
-    """Per-test script: declare responses consumed in order; feed responses
-    keyed by intent id. Captures every (method, path, body). own_feed, when
-    set, is served for the intent id of the LAST POSTed episode_seed --
-    "the calling invocation's own intent" without knowing the fresh nonce
-    up front."""
-
-    def __init__(self, declare_responses, feeds=None, own_feed=None):
-        self.declare_responses = list(declare_responses)
-        self.feeds = dict(feeds or {})
-        self.own_feed = own_feed
-        self.calls = []  # (method, path, body-bytes-or-None)
-
-
-def _serve(script):
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
-            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            script.calls.append(("POST", self.path, body))
-            status, payload = script.declare_responses.pop(0)
-            data = json.dumps(payload).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def do_GET(self):
-            script.calls.append(("GET", self.path, None))
-            iid = self.path.split("/")[3] if self.path.startswith("/v2/intents/") else ""
-            events = script.feeds.get(iid, [])
-            if script.own_feed is not None:
-                posts = [c for c in script.calls if c[0] == "POST"]
-                own = intent_id(json.loads(posts[-1][2])["episode_seed"]) if posts else ""
-                if iid == own:
-                    events = script.own_feed
-            data = json.dumps({"events": events}).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def log_message(self, *a):  # keep pytest output clean
-            pass
-
-    server = HTTPServer(("127.0.0.1", 0), Handler)
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
-    return server, "http://127.0.0.1:%d" % server.server_address[1]
 
 
 class _Counted:
@@ -360,7 +306,7 @@ def test_adapter_import_graph_is_tree_local():
     import pathlib
 
     src = (pathlib.Path(__file__).parent / "langchain_adapter.py").read_text(encoding="utf-8")
-    allowed = {"__future__", "json", "uuid", "langchain_core", "client", "declare"}
+    allowed = {"__future__", "json", "uuid", "langchain_core", "client", "declare", "gating"}
     for line in src.splitlines():
         s = line.strip()
         if s.startswith("import ") or s.startswith("from "):

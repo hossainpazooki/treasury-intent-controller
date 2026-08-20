@@ -1,7 +1,9 @@
 """The Python twin of declarant/client.go (CONTRACT.md section 2.7).
 
 The 500-edge consults the per-intent feed BEFORE deciding; an unreachable
-feed decides nothing (INDETERMINATE). Stdlib urllib only.
+feed decides nothing (INDETERMINATE). Redirects are never followed
+(_NoRedirectHandler); a 3xx takes the same unexpected-status path.
+Stdlib urllib only.
 """
 
 from __future__ import annotations
@@ -43,6 +45,34 @@ class Result:
 DEFAULT_TIMEOUT = 30.0
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Declines every redirect (section 2.7 redirect rule, 2026-08-20).
+
+    Returning None from redirect_request makes urllib stop instead of
+    following, and the default error handler then raises HTTPError carrying
+    the 3xx status - which declare() already handles like any other
+    unexpected status (consult the feed, then INDETERMINATE).
+
+    Why this exists: following a 301/302/303 answer to the declaration POST
+    downgrades it to a GET and DROPS the declaration body, so the redirect
+    target receives no declaration at all - and an ACHIEVED-shaped 200 from
+    that origin would be read back as a fresh synchronous authorization for
+    an action that was never declared. Do not "simplify" this away; the
+    realistic trigger is infrastructural (https upgrade, moved path, proxy
+    in front of the gate), not adversarial.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# Module-level opener used for BOTH the declaration POST and the feed GET,
+# in place of urllib.request.urlopen (whose global opener follows redirects).
+# Stdlib only - build_opener drops the default HTTPRedirectHandler because
+# _NoRedirectHandler subclasses it.
+_OPENER = urllib.request.build_opener(_NoRedirectHandler)
+
+
 class Client:
     """Mirror of Go client.Client. declare() drops the Go ctx param - Python
     has no context.Context; the honest equivalent is the per-call timeout on
@@ -73,8 +103,12 @@ class Client:
         )
 
         try:
-            resp = urllib.request.urlopen(req, timeout=self.timeout)
+            # _OPENER, never urlopen: redirects are declined, not followed.
+            resp = _OPENER.open(req, timeout=self.timeout)
         except urllib.error.HTTPError as err:
+            # Includes a declined 3xx (see _NoRedirectHandler): a redirect is
+            # not an authorization, so it falls through to the unexpected-
+            # status path below like any other non-200.
             status = err.code
             err.read()  # discard body, mirror io.Copy(io.Discard, ...)
             err.close()
@@ -136,7 +170,10 @@ class Client:
         """Mirror Go client.getJSON."""
         req = urllib.request.Request(url, method="GET")
         try:
-            resp = urllib.request.urlopen(req, timeout=self.timeout)
+            # _OPENER, never urlopen: the feed consult declines redirects too
+            # - a redirected feed read observes another origin's records, and
+            # the 500 edge decides from what the consult observed.
+            resp = _OPENER.open(req, timeout=self.timeout)
         except urllib.error.HTTPError as err:
             status = err.code
             err.read()

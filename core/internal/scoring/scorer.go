@@ -60,8 +60,21 @@ type HTTPScorer struct {
 func NewHTTPScorer(endpoint string) *HTTPScorer {
 	return &HTTPScorer{
 		Endpoint: endpoint,
-		Client:   &http.Client{Timeout: DefaultTimeout},
+		Client:   &http.Client{Timeout: DefaultTimeout, CheckRedirect: noRedirect},
 	}
+}
+
+// noRedirect refuses to follow a 3xx from the scorer (CONTRACT.md §2.4).
+// A followed redirect sends the criterion evaluation to an origin that is
+// NOT the configured scorer — and with 301/302/303 the POST is downgraded
+// to a body-less GET, so that origin is never even told which criterion it
+// is answering about. Its `{"result":"PASS"}` would then bind as a real
+// criterion PASS. Returning ErrUseLastResponse hands the 3xx back
+// unfollowed, and the non-2xx check below fails it closed to Unevaluable.
+// Measured 2026-08-20 before this existed: all five redirect codes scored
+// Pass. Do not "simplify" this away.
+func noRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // Score POSTs an EvalRequest to the configured endpoint and maps the response
@@ -89,7 +102,9 @@ func (h *HTTPScorer) Score(ctx context.Context, i intent.Intent, c intent.Criter
 
 	client := h.Client
 	if client == nil {
-		client = http.DefaultClient
+		// NOT http.DefaultClient: it follows redirects, which would reopen
+		// the fail-open noRedirect exists to close for a zero-value scorer.
+		client = &http.Client{Timeout: DefaultTimeout, CheckRedirect: noRedirect}
 	}
 
 	resp, err := client.Do(req)

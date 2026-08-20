@@ -352,3 +352,40 @@ func TestResponseFixturesDriveScore(t *testing.T) {
 		}
 	}
 }
+
+// TestHTTPScorerNeverFollowsRedirects pins the CONTRACT.md §2.4 redirect rule.
+// A followed 3xx sends the criterion evaluation to an origin that is NOT the
+// configured scorer; with 301/302/303 the POST is downgraded to a body-less
+// GET, so that origin is never told which criterion it is answering about.
+// Its "PASS" must never bind. Measured 2026-08-20 before the fix: ALL FIVE
+// codes scored Pass, including 307/308 (which do forward the body, but to the
+// wrong origin). Mutant: drop CheckRedirect from NewHTTPScorer -> this fails.
+func TestHTTPScorerNeverFollowsRedirects(t *testing.T) {
+	var otherSaw []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		otherSaw = append(otherSaw, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{"result":"PASS"}`)); err != nil {
+			t.Errorf("write: %v", err)
+		}
+	}))
+	defer other.Close()
+
+	for _, code := range []int{http.StatusMovedPermanently, http.StatusFound,
+		http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		otherSaw = nil
+		gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, other.URL+"/elsewhere", code)
+		}))
+		got := NewHTTPScorer(gate.URL).Score(context.Background(),
+			testIntent(), intent.Criterion{Name: "balance", Threshold: 1}, intent.Phase("pre"))
+		gate.Close()
+
+		if got != Unevaluable {
+			t.Errorf("HTTP %d: got %v, want Unevaluable (a redirect is not a criterion PASS)", code, got)
+		}
+		if len(otherSaw) != 0 {
+			t.Errorf("HTTP %d: redirect target was contacted (%v); the client must not follow", code, otherSaw)
+		}
+	}
+}

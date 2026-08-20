@@ -56,7 +56,12 @@ const DefaultTimeout = 30 * time.Second
 
 // Client is the declarant's wire client. BaseURL is the gate's origin
 // (e.g. "http://127.0.0.1:8080"); HTTP nil means a client bounded by
-// DefaultTimeout.
+// DefaultTimeout that declines redirects (§2.7).
+//
+// A caller-supplied HTTP client is honored verbatim — including its redirect
+// policy. Supply one with a CheckRedirect that returns
+// http.ErrUseLastResponse, or the declaration can be redirected away from the
+// gate (see httpClient below for what that costs).
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
@@ -66,7 +71,21 @@ func (c *Client) httpClient() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: DefaultTimeout}
+	return &http.Client{
+		Timeout: DefaultTimeout,
+		// Redirects are NEVER followed (§2.7 redirect rule, 2026-08-20).
+		// Following a 301/302/303 answer to the declaration POST downgrades
+		// it to a GET and DROPS the declaration body: the redirect target
+		// receives no declaration at all, and its ACHIEVED-shaped 200 would
+		// then be read back as a fresh synchronous authorization for an
+		// action that was never declared. ErrUseLastResponse hands the 3xx
+		// back verbatim so it flows down the same path as any other
+		// unexpected status — feed consult first, Indeterminate when the
+		// feed decides nothing. Do not "simplify" this away; the realistic
+		// trigger is infrastructural (https upgrade, moved path, proxy),
+		// not adversarial.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 // Declare POSTs one declaration and classifies the outcome (§2.7).
@@ -74,6 +93,8 @@ func (c *Client) httpClient() *http.Client {
 //   - 200: classify the synchronous terminal.
 //   - 400: the SDK marshaled something the server rejects — SDKBug (version
 //     skew fails loudly by design; fix the SDK or amend §2.2 first).
+//   - 3xx: not followed (§2.7) — a redirect is not an authorization; it
+//     takes the same path as any other unexpected status below.
 //   - 500: NO terminal guarantee (§4.1) — the idempotency key may be
 //     reserved with no ACHIEVED record. Declare consults
 //     GET /v2/intents/{id}/events BEFORE returning: an observed

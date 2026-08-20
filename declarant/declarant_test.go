@@ -9,12 +9,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -232,6 +236,78 @@ func TestDeclare500FeedUnreachableIsIndeterminate(t *testing.T) {
 	}
 	if res.Class != Indeterminate || res.FeedConsulted {
 		t.Fatalf("an unreachable feed decides NOTHING: %+v", res)
+	}
+}
+
+// A 3xx answer to a declaration is NEVER followed (§2.7 redirect rule,
+// 2026-08-20). Following a 301/302/303 downgrades the POST to a body-less
+// GET: the redirect target never receives the declaration, yet its
+// ACHIEVED-shaped 200 would be read back as a FRESH synchronous
+// authorization — the action fires having never been declared. 307/308
+// preserve the body and so were never the hole, but the policy declines
+// every 3xx uniformly: a redirect is not an authorization, and there is no
+// special case here to get wrong. The 3xx flows down the ordinary
+// unexpected-status path — feed consult first, Indeterminate when the feed
+// decides nothing.
+//
+// Mirror: test_declare_redirect_is_never_followed in
+// pydeclarant/test_client.py.
+func TestDeclareRedirectIsNeverFollowed(t *testing.T) {
+	for _, code := range []int{301, 302, 303, 307, 308} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			// The OTHER origin: answers ANY request with an ACHIEVED-shaped
+			// 200 and records what it actually received.
+			var mu sync.Mutex
+			var seen []string
+			other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				mu.Lock()
+				seen = append(seen, fmt.Sprintf("%s %s body=%d", r.Method, r.URL.Path, len(b)))
+				mu.Unlock()
+				w.Write([]byte(`{"terminal":"ACHIEVED","reason":"","trajectory_hash":"aa","achieved_seq":7}`))
+			}))
+			t.Cleanup(other.Close)
+
+			id := IntentID("golden-episode")
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /v2/intents", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Location", other.URL+"/elsewhere")
+				w.WriteHeader(code)
+			})
+			// The gate's own feed is reachable but holds nothing that
+			// decides: the consult runs, and still nothing authorizes.
+			mux.HandleFunc("GET /v2/intents/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"intent_id":"` + id + `","events":[]}`))
+			})
+			gate := httptest.NewServer(mux)
+			t.Cleanup(gate.Close)
+
+			c := &Client{BaseURL: gate.URL}
+			res, err := c.Declare(context.Background(), goldenRequest())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Class == Proceed {
+				t.Fatalf("a %d redirect classified Proceed — an undeclared action would fire: %+v", code, res)
+			}
+			if res.Class != Indeterminate || res.SameKeyRetrySafe {
+				t.Fatalf("a %d must fail closed to Indeterminate: %+v", code, res)
+			}
+			if res.Terminal != nil {
+				t.Fatalf("a %d carries no synchronous terminal: %+v", code, res.Terminal)
+			}
+			if res.HTTPStatus != code {
+				t.Fatalf("HTTPStatus = %d, want the 3xx itself (%d) — the redirect was followed", res.HTTPStatus, code)
+			}
+			if !res.FeedConsulted {
+				t.Fatalf("a 3xx is an unexpected status: the feed consult must precede the decision: %+v", res)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(seen) != 0 {
+				t.Fatalf("the redirect target was contacted (%v) — it never received the declaration, so its 200 is not an authorization", seen)
+			}
+		})
 	}
 }
 
