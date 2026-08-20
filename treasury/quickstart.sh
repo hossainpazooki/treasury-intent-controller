@@ -69,6 +69,14 @@ if ! "$venv_py" -c 'import langchain_core' 2>/dev/null; then
         "$venv_py" -m pip install --user --break-system-packages -q langchain-core
 fi
 
+# The MCP probes (9 and 10) need fastmcp; same guard-then-install shape, and
+# the same PEP 668 escape hatch for the system-python3 fallback.
+if ! "$venv_py" -c 'import fastmcp' 2>/dev/null; then
+    echo "[setup] installing fastmcp for the MCP probes (one-time)"
+    "$venv_py" -m pip install -q 'fastmcp>=3,<4' 2>/dev/null || \
+        "$venv_py" -m pip install --user --break-system-packages -q 'fastmcp>=3,<4'
+fi
+
 echo "[boot] scorer with treasury facts (balance=250, fx_rate=1.30)"
 SCORER_FACTS_JSON=$(cat "$here/facts.json") SCORER_PORT=$scorer_port "$venv_py" -m scorer &
 scorer_pid=$!
@@ -193,16 +201,50 @@ else
 fi
 echo "       why it matters: a wrapped agent tool fires its consequence exactly once, and a refusal is a classified outcome - not an exception to debug"
 
+# Probe 9 (MCP gate middleware LIVE, CONTRACT.md 2.7 "MCP gate"): a gated
+# FastMCP tool executes once on a live Proceed; the same-args call refuses
+# ALREADY_RESERVED with the body not re-fired; and a SECOND middleware
+# instance sharing no state with the first is refused too, with its own
+# counter at 0. A refusing probe exits nonzero by design - a probe
+# assertion, not a script abort.
+p9_rc=0; p9=$("$venv_py" "$here/probes/mcp_gate_live.py" "$gate_url" "$hash02") || p9_rc=$?
+case "$p9" in
+    *"mcp call 1: executed=1 result=moved 25 alpha"*"mcp call 2: refused class=ALREADY_RESERVED executed=1"*"mcp replica: refused class=ALREADY_RESERVED replica_executed=0"*) p9_ok=1;;
+    *) p9_ok=0;;
+esac
+if [ "$p9_rc" -eq 0 ] && [ "$p9_ok" = 1 ]; then
+    pass=$((pass + 1)); echo "[PASS] MCP gate middleware (live): $(printf '%s' "$p9" | tr '\n' ';')"
+else
+    fail=$((fail + 1)); echo "[FAIL] MCP gate middleware (live): rc=$p9_rc out=$(printf '%s' "$p9" | tr '\n' ';')"
+fi
+echo "       why it matters: the key is DERIVED, not remembered - two replicas sharing no state refuse the same retry, so the gate survives horizontal scaling"
+
+# Probe 10 (gated MCP proxy LIVE, CONTRACT.md 2.7 gated_proxy): an UNGATED
+# backend standing in for a server the operator does not own is fronted by
+# the gate under its OWN run id. The INNER counter is the observable: the
+# refused call never reaches the backend at all.
+p10_rc=0; p10=$("$venv_py" "$here/probes/mcp_proxy_live.py" "$gate_url" "$hash02") || p10_rc=$?
+case "$p10" in
+    *"mcp proxy call 1: inner_executed=1 result=moved 25 alpha"*"mcp proxy call 2: refused class=ALREADY_RESERVED inner_executed=1"*"mcp proxy strict: refused schema declares no default inner_tagged=0"*) p10_ok=1;;
+    *) p10_ok=0;;
+esac
+if [ "$p10_rc" -eq 0 ] && [ "$p10_ok" = 1 ]; then
+    pass=$((pass + 1)); echo "[PASS] gated MCP proxy (live): $(printf '%s' "$p10" | tr '\n' ';')"
+else
+    fail=$((fail + 1)); echo "[FAIL] gated MCP proxy (live): rc=$p10_rc out=$(printf '%s' "$p10" | tr '\n' ';')"
+fi
+echo "       why it matters: a server you do not own is gated without changing it - the backend never sees a call the gate refused, and an unkeyable call is refused BEFORE anything is declared"
+
 echo "[chaos] killing the scorer to prove fail-closed on outage"
 kill "$scorer_pid"; sleep 1
 probe "declare during scorer outage" 04-outage.json "$hash02" FAILED unevaluable "an unreachable scorer denies - unevaluable NEVER collapses into a pass"
 probe "attested-but-thin spec" 05-empty-criteria.json "$hash05" FAILED unevaluable:empty-criteria "thin-spec defense - attestation does not launder vacuity; zero criteria still refuse"
 
 achieved=$(curl -fsS "$gate_url/v2/events?since=0" | "$venv_py" -c "import json,sys; e=json.load(sys.stdin)['events']; print(sum(1 for r in e if r['type']=='ACHIEVED'))")
-if [ "$achieved" = "4" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 4 ACHIEVED records - one per authorized key, never a duplicate"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 4 ACHIEVED, got $achieved"; fi
+if [ "$achieved" = "6" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 6 ACHIEVED records - one per authorized key, never a duplicate"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 6 ACHIEVED, got $achieved"; fi
 echo "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-# Probe 12: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
+# Probe 14: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
 # every commitment - trajectory hashes on grants AND refusals, sequence
 # contiguity, exactly-one-ACHIEVED - from the record bytes alone, and their
 # reports must be byte-identical. `set -e` is suspended around the calls: a
@@ -218,5 +260,5 @@ else
 fi
 echo "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-echo "RESULT: $pass/12 probes passed"
+echo "RESULT: $pass/14 probes passed"
 [ "$fail" -eq 0 ]

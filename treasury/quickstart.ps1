@@ -42,6 +42,14 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "langchain-core install failed" }
     }
 
+    # The MCP probes (9 and 10) need fastmcp; same guard-then-install shape.
+    & $venvPy -c "import fastmcp" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[setup] installing fastmcp for the MCP probes (one-time)"
+        & $venvPy -m pip install -q "fastmcp>=3,<4"
+        if ($LASTEXITCODE -ne 0) { throw "fastmcp install failed" }
+    }
+
     Write-Host "[boot] scorer with treasury facts (balance=250, fx_rate=1.30)"
     $env:SCORER_FACTS_JSON = Get-Content (Join-Path $PSScriptRoot "facts.json") -Raw
     $env:SCORER_PORT = "$scorerPort"
@@ -164,6 +172,36 @@ try {
     else { $fail++; Write-Host "[FAIL] LangChain adapter (live): rc=$p8Rc out=$p8line" }
     Write-Host "       why it matters: a wrapped agent tool fires its consequence exactly once, and a refusal is a classified outcome - not an exception to debug"
 
+    # Probe 9 (MCP gate middleware LIVE, CONTRACT.md 2.7 "MCP gate"): a gated
+    # FastMCP tool executes once on a live Proceed; the same-args call refuses
+    # ALREADY_RESERVED with the body not re-fired; and a SECOND middleware
+    # instance sharing no state with the first is refused too, with its own
+    # counter at 0. A refusing probe exits nonzero by design - a probe
+    # assertion, not a script abort.
+    $p9 = (& $venvPy (Join-Path $PSScriptRoot "probes\mcp_gate_live.py") $gateUrl $hash02 | Out-String).Trim()
+    $p9Rc = $LASTEXITCODE
+    $ok = ($p9Rc -eq 0) -and ($p9 -like "*mcp call 1: executed=1 result=moved 25 alpha*") -and
+          ($p9 -like "*mcp call 2: refused class=ALREADY_RESERVED executed=1*") -and
+          ($p9 -like "*mcp replica: refused class=ALREADY_RESERVED replica_executed=0*")
+    $p9line = $p9 -replace "`r`n", "; " -replace "`n", "; "
+    if ($ok) { $pass++; Write-Host "[PASS] MCP gate middleware (live): $p9line" }
+    else { $fail++; Write-Host "[FAIL] MCP gate middleware (live): rc=$p9Rc out=$p9line" }
+    Write-Host "       why it matters: the key is DERIVED, not remembered - two replicas sharing no state refuse the same retry, so the gate survives horizontal scaling"
+
+    # Probe 10 (gated MCP proxy LIVE, CONTRACT.md 2.7 gated_proxy): an UNGATED
+    # backend standing in for a server the operator does not own is fronted by
+    # the gate under its OWN run id. The INNER counter is the observable: the
+    # refused call never reaches the backend at all.
+    $p10 = (& $venvPy (Join-Path $PSScriptRoot "probes\mcp_proxy_live.py") $gateUrl $hash02 | Out-String).Trim()
+    $p10Rc = $LASTEXITCODE
+    $ok = ($p10Rc -eq 0) -and ($p10 -like "*mcp proxy call 1: inner_executed=1 result=moved 25 alpha*") -and
+          ($p10 -like "*mcp proxy call 2: refused class=ALREADY_RESERVED inner_executed=1*") -and
+          ($p10 -like "*mcp proxy strict: refused schema declares no default inner_tagged=0*")
+    $p10line = $p10 -replace "`r`n", "; " -replace "`n", "; "
+    if ($ok) { $pass++; Write-Host "[PASS] gated MCP proxy (live): $p10line" }
+    else { $fail++; Write-Host "[FAIL] gated MCP proxy (live): rc=$p10Rc out=$p10line" }
+    Write-Host "       why it matters: a server you do not own is gated without changing it - the backend never sees a call the gate refused, and an unkeyable call is refused BEFORE anything is declared"
+
     Write-Host "[chaos] killing the scorer to prove fail-closed on outage"
     Stop-Process -Id $scorer.Id -Force
     Start-Sleep -Milliseconds 500
@@ -172,11 +210,11 @@ try {
 
     $events = Invoke-RestMethod -Uri "$gateUrl/v2/events?since=0"
     $achieved = @($events.events | Where-Object { $_.type -eq "ACHIEVED" })
-    if ($achieved.Count -eq 4) { $pass++; Write-Host "[PASS] durable feed: exactly 4 ACHIEVED records - one per authorized key - among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
-    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 4 ACHIEVED, got $($achieved.Count)" }
+    if ($achieved.Count -eq 6) { $pass++; Write-Host "[PASS] durable feed: exactly 6 ACHIEVED records - one per authorized key - among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
+    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 6 ACHIEVED, got $($achieved.Count)" }
     Write-Host "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-    # Probe 12: the recompute probe (CONTRACT.md 9.1). Both verifier twins
+    # Probe 14: the recompute probe (CONTRACT.md 9.1). Both verifier twins
     # re-derive every commitment - trajectory hashes on grants AND refusals,
     # sequence contiguity, exactly-one-ACHIEVED - from the record bytes alone,
     # and their reports must agree line-for-line. A refuting verifier exits
@@ -190,7 +228,7 @@ try {
     else { $fail++; Write-Host "[FAIL] verifier recompute: goExit=$goRc pyExit=$pyRc identical=$($goReport -eq $pyReport)"; Write-Host $goReport }
     Write-Host "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-    Write-Host ("RESULT: {0}/12 probes passed" -f $pass)
+    Write-Host ("RESULT: {0}/14 probes passed" -f $pass)
 }
 finally {
     # Reclaim on EVERY exit path - a Wait-Healthy timeout or a transport throw
