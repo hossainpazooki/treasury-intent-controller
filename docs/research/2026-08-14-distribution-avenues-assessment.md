@@ -115,3 +115,19 @@ internal-reference classes the ATLAS scrub queued
    fallback removed); upstream docs described by role, not name/number.
 
 The rulings queue from this document is now EMPTY.
+
+## ADDENDUM 2 — ruling received (2026-08-20)
+
+7. **MCP gate lane: ADOPTED, full scope** — next build workstream is an
+   MCP adapter in `declarant/pydeclarant/` (born SDK-side per the per-tree
+   ownership decision): an intent-gate middleware for fastmcp servers PLUS
+   a gated proxy (`create_proxy` + the same middleware) that gates MCP
+   servers the operator does not own. The proxy is IN scope for the same
+   build, ordered after the middleware in the live ladder so first-live-run
+   failures localize. Dependency: **fastmcp 3.x becomes the second
+   sanctioned exception** to the pydeclarant stdlib-only rule (alongside
+   `langchain_core`; the operator locked this as "v2" — the spike found
+   fastmcp current at 3.4.7 with the middleware/proxy API carried over, and
+   the ruling's substance is the package, not the major). **Datadog and the
+   R4 OTel exporter: DEFERRED, kept supply-side** — unchanged rulings 1/4
+   stand; no build until a new ruling.

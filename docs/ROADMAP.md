@@ -55,10 +55,13 @@ Accepted; 0009/0010 reserved, not yet written).
 ## Distribution (rulings 2026-08-18, recorded in
 `docs/research/2026-08-14-distribution-avenues-assessment.md` addendum)
 
-- **Next build workstream: the LangChain adapter SDK** (operator override of
-  "avenue 4 on named demand") — born SDK-side per ADR-0011; needs its own
-  plan before code.
-- **Datadog: roadmapped** — near-term = log-forward the feed (no SDK
-  change); exporter path per R4's external ruling when adopted.
+- **LangChain adapter SDK: SHIPPED 2026-08-18** (live-proven, quickstart
+  probe 8; the operator override of “avenue 4 on named demand” is spent).
+- **Next build workstream (ruling 7, 2026-08-20): the MCP gate** —
+  fastmcp-3.x intent-gate middleware + gated proxy, born SDK-side; fastmcp
+  is the second sanctioned stdlib-only exception. Plan before code.
+- **Datadog + R4 OTel exporter: DEFERRED (ruling 7, 2026-08-20), kept
+  supply-side** — near-term Datadog story stays log-forward the feed (no
+  SDK change); exporter stays external per R4; no build until a new ruling.
 - **Content channel: split** — supply-side article + demand-side artifact.
 - **Release signing: deferred** ("not for now") — checksums stay the floor.
