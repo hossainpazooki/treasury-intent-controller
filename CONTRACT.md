@@ -425,6 +425,17 @@ five original fields are required):
   boundary, consciously deferred to the resolver-extraction slice (where the
   exact scalar actually crosses), not fixed here.
 
+**Redirects are NEVER followed on this seam either (2026-08-20).** A 3xx
+answer to `/ml/evaluate` sends the criterion evaluation to an origin that
+is not the configured scorer — with 301/302/303 the POST is downgraded to
+a body-less GET, so the responder is never even told which criterion it is
+answering about — and a `200 {"result":"PASS"}` from that responder would
+otherwise bind as a criterion PASS. Measured before the fix: all five
+redirect codes produced `Pass`. The scorer client therefore sets
+`CheckRedirect` to return `http.ErrUseLastResponse`, after which the
+existing non-2xx row below fails it closed. This is the same defect class
+as the declarant's redirect rule (§2.7) and was found the same day.
+
 **Client fail-closed matrix** (each row is a test in `core/internal/scoring/scorer_test.go`):
 
 | Failure | Client result |
@@ -432,6 +443,7 @@ five original fields are required):
 | connection refused / DNS / TLS | `Unevaluable` |
 | timeout (`DefaultTimeout`) or ctx cancel | `Unevaluable` |
 | non-2xx status (400, 422, 500, 503…) | `Unevaluable` |
+| **3xx redirect (301/302/303/307/308)** | `Unevaluable` — the client NEVER follows a redirect (2026-08-20) |
 | body not JSON / truncated | `Unevaluable` |
 | `result` absent or outside the closed set | `Unevaluable` |
 | empty `Endpoint` | `Unevaluable` |
@@ -582,6 +594,21 @@ is caller guidance layered on top of it.
   caller's one call, never the declarant forever. An unbounded client is
   an explicit caller opt-in (Go: supply your own `http.Client`; Python:
   pass `timeout=None`), never the default.
+- **Redirects are NEVER followed (2026-08-20).** A 301/302/303 answer to a
+  declaration makes an ordinary HTTP client downgrade the POST to GET and
+  DROP the declaration body, so the redirect target receives no
+  declaration at all — and an `ACHIEVED`-shaped 200 from that target would
+  then be read as a fresh authorization for a call that was never
+  declared. Both SDK clients therefore decline redirects (Go:
+  `CheckRedirect` returning `http.ErrUseLastResponse`; Python: an opener
+  whose redirect handler declines), and a 3xx is treated like any other
+  non-200 status: the per-intent feed is consulted BEFORE anything is
+  decided, and an unreachable feed decides nothing (`Indeterminate`). The
+  realistic trigger is infrastructural rather than adversarial — an
+  https-upgrade redirect, a moved path, or a proxy in front of the gate
+  silently converting "declaring" into "not declaring". Found by the
+  2026-08-20 mutation pass, in BOTH clients, after the LangChain adapter
+  had already shipped on top of them.
 - **Settlement.** Side effects key off observed ACHIEVED records from the
   cursor feed (`?since=<durable cursor>`, §5.3 `feedConsumer` discipline),
   never off the synchronous response alone.
@@ -590,8 +617,9 @@ is caller guidance layered on top of it.
 2026-08-18):** `declarant/` (Go, the reference) and
 `declarant/pydeclarant/` (Python twin, mirroring the
 `verifier/pyverifier/` precedent; its core modules `declare.py` and
-`client.py` are stdlib-only — the ONE exception in the tree is the
-optional framework adapter below, which imports `langchain_core`). Both
+`client.py` are stdlib-only — the TWO exceptions in the tree are the
+optional adapters below, which import `langchain_core` and `fastmcp`
+respectively). Both
 are held to the same frozen golden request bytes
 (`declarant/testdata/request-golden.json`), the same total classification
 table with the same fail-closed `Unknown`, and the same 500-edge call
@@ -622,6 +650,101 @@ visibly and lose nothing else; this monorepo's venv carries it since
 2026-08-18, so the full adapter lane runs here, and the adapter's LIVE leg
 is quickstart probe 8 (a gated tool executes once on a live `Proceed`; the
 same-args call raises `ALREADY_RESERVED` with the tool body not re-fired).
+
+**MCP gate (`mcp_adapter.py`, born SDK-side 2026-08-20).** `IntentGateMiddleware`
+gates tool calls on a `fastmcp` server through the same declare → await
+terminal → proceed-or-refuse discipline as the framework adapter above:
+the tool body runs ONLY on a fresh synchronous `Proceed`, and every
+other class — `ShadowRecorded`, `Indeterminate`, the fail-closed
+`Unknown`, and the adapter-level `ALREADY_ACHIEVED` — raises a
+`ToolError` whose message carries the class, terminal, reason, and
+same-key-retry position, with the tool body never called. `gated_proxy`
+attaches the SAME middleware to a proxy front end, so a server the
+operator does NOT own is gated without any change to it: the fronted
+server never learns the gate exists. Each call declares under its own
+FRESH intent (episode seed = idempotency key + per-invocation nonce, the
+fresh-episode rule above); because the gate holds no state between
+calls, a retry that lands on a DIFFERENT replica is
+same-key/fresh-episode by construction — that is what makes the
+middleware safe under stateless HTTP, where no session binds a retry to
+the replica that saw the original. Run identity (`scope`, `run_id`,
+`intent_spec_hash`) is middleware configuration, never session state.
+The MCP canonicalization recipe is governed by a rule this section now
+states outright, because an earlier draft of it got the direction
+backwards. A key FORK — one logical action canonicalizing to two
+different keys — is FAIL-OPEN: the gate deduplicates BY KEY, so a
+second, never-seen key has no reservation to collide with, and the
+consequence fires twice. A key COLLISION — two distinct actions sharing
+one key — is fail-closed instead, bricking the second action
+permanently (§7.2: reservations never expire). Forks are therefore the
+direction to engineer against. **Withdrawn (2026-08-20):** the claim
+that an un-normalized nested default "yields a duplicate declaration
+(refused) and never a double execution, so the residual errs
+fail-closed" was inverted reasoning — a fork is precisely the case where
+no duplicate declaration can occur — and the residual it excused was
+demonstrated to double-execute. It is closed on the direct path and
+refused on the proxy path, as follows.
+
+The recipe has two tiers, because the two deployment shapes expose
+different information about the action:
+
+- **Tier 1, a tool the gated server owns** (its callable is reachable):
+  the raw arguments are validated against a model rebuilt from the
+  tool's own signature, then serialized `model_dump(mode="json")` and
+  sorted-key compact JSON. The key is thus a function of the EFFECTIVE
+  action — nested defaults, an omitted `default_factory` value, and
+  equivalent JSON numeric forms (`500` and `500.0` for one float
+  parameter) all normalize to one key. This is deliberately the
+  framework adapter's recipe: the same normalization, reached a
+  different way.
+- **Tier 2, a tool reached only through a proxy** (a fronted server the
+  operator does not own exposes a JSON Schema and nothing else): schema
+  defaults are injected RECURSIVELY, resolving `$defs`/`$ref`, and
+  values are coerced to their declared numeric type, then the same
+  sorted-key compact JSON. What Tier 2 cannot recover is a default the
+  schema never declares — a remote `default_factory` is invisible in
+  JSON Schema — so an OMITTED, non-required property with no
+  discoverable default is REFUSED before any declaration rather than
+  guessed at. An operator fronting a loose-schema backend may opt out
+  (`strict_args=False`) and thereby accept, explicitly and in writing,
+  that such a call is keyed AS SPELLED and that two spellings of one
+  action would fork.
+
+Two asymmetries between the tiers are deliberate, and recorded here
+rather than smoothed over. First, Tier 1 rebuilds the model with extra
+arguments FORBIDDEN, so an argument the tool does not declare is refused
+before anything is declared; otherwise the gate would authorize a call
+the framework then rejects, leaving a committed `ACHIEVED` in the feed
+for a consequence that never fired — and §5.3 consumers settle from that
+feed. Tier 2 cannot do the same: a fronted schema that does not set
+`additionalProperties: false` may legitimately accept extra properties,
+so Tier 2 keys them as spelled. Cross-tier byte equality therefore holds
+for DECLARED arguments, which is what the pinned test asserts. Second,
+Tier 1 refuses (rather than silently downgrading to Tier 2) when a
+tool's annotations cannot be resolved: a downgrade would change the key
+recipe without the operator knowing.
+
+**RECORDED RESIDUAL — proxy path only, and FAIL-OPEN by the rule above,
+not excused as anything safer.** Tier 2 recurses into an `anyOf`/`oneOf`
+only when exactly one branch is non-`null`, which covers `Optional[T]`.
+A genuine union such as `float | str` is left as spelled, so two
+equivalent JSON spellings of one value would fork the key on that path.
+Tier 1 is unaffected — the framework resolves the union. Closing this
+requires either refusing ambiguous unions under `strict_args` or
+declaring a normalization order for them; neither is adopted here, so
+the residual stands stated.
+
+A property the schema lists as `required` that is ABSENT is refused before declaring in BOTH tiers, and that refusal is NOT subject to `strict_args`: such a call cannot be canonicalized honestly, and letting it through earns a durable `ACHIEVED` for a call the framework then rejects.
+
+If the tool's schema cannot be read, the call is refused
+BEFORE any declaration — an unknown schema cannot be canonicalized
+honestly, so nothing is declared and nothing executes. The optional
+`tools=` filter narrows gating to named tools; an unlisted tool passes
+UNGATED, which is the operator's explicit choice and never a silent
+default (the default, `tools=None`, gates every tool). A bare STRING is refused at construction: `tools="transfer"` is a collection of CHARACTERS, so the tool it names would not match and every tool would pass ungated — measured before the guard existed at zero declarations and one execution, from a one-character-class operator mistake with no error and no log line. Like the
+framework adapter, the MCP gate is optional: hosts without `fastmcp`
+skip its tests visibly and lose nothing else. Its live legs are
+quickstart probes 9 (the middleware) and 10 (the gated proxy).
 
 ---
 
@@ -1030,7 +1153,7 @@ non-vacuous by mutating a COPY of the tree and watching it go red.
 | 11 | Stable-once / volatile-twice crosses the wire: a counting `httptest` scorer sees exactly one `declaration` call per criterion and exactly one extra `dispatch` call per volatile criterion. | `TestStableOnceVolatileTwiceAcrossWire`. Mutant: drop the phase guard. |
 | 12 | Live outage refuses, never grants. | Two-process probe: gate `ACHIEVED` with the service up and facts passing; kill the service; the same intent (fresh key) ⟹ `FAILED`, `unevaluable:<criterion>`, no ACHIEVED record in the feed. The kill is real (`taskkill` / `kill`), not mocked. |
 | 13 | Refusal-hash commitment: the terminal-position record of EVERY completed authorization carries `trajectory_hash`, it recomputes from the per-intent records, and no non-terminal record carries one. | `go test ./core/internal/gate -run TerminalHash` — drive one intent per terminal class (ACHIEVED, SHADOW_RECORDED, criteria-FAILED, volatile-recheck, idempotency-collision, and a step-1 refusal) and assert the hash placement + recompute. Mutant: stamp the hash one event early. |
-| 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus quickstart probe 12 (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
+| 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus quickstart probe 14 (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
 | 15 | Declarant discipline (§2.7): the SDK marshals exactly the declarant-owned §2.2 fields (golden request bytes), `force_scores` exists in no declarant type, terminal classification is total with a fail-closed `Unknown`, and the 500 edge consults the per-intent feed before deciding. | `go test ./declarant -count=1` — golden-bytes marshal test; classification table test covering every §3.2/§3.3 cause class AND an out-of-vocabulary reason; an `httptest` 500-edge test proving the feed consult precedes the decision. Mutant: drop the `Unknown` fallback (default to retry) → classification test red. Python twin (2026-08-18): `python -m pytest declarant/pydeclarant` — the SAME golden bytes byte-compared, the same classification totality incl. out-of-vocabulary, and an in-process-HTTP 500-edge call-order proof. Live: quickstart probe 6 (Go SDK: declare ⟹ `PROCEED`; re-declare same key ⟹ `ALREADY_RESERVED`) and probe 7 (the Python twin's `Client`, same two-step under its own derived key). |
 | 16 | Maker-checker chassis, end to end (2026-08-12): authoring routes every provision (criterion / human-judgment / named unknown), pins each to the sha256 of its EXACT passage and defaults a new draft to shadow; the attested bytes ARE the executed bytes (envelope payload byte-identical to the draft file, its hash is the content address, store resolution returns the same payload with the human-judgment entry intact — attestation launders nothing); promotion is a NEW authority act (new hash, only `enforcement_posture` differs, the shadow artifact's stored bytes untouched, §2.6); revocation kills exactly the revoked artifact, and the promoted sibling still resolves. | `go test ./treasury -count=1` — `TestMakerCheckerFlow` execs the REAL seat binaries built by `TestMain` (author → keygen → root → attest → publish → promote → revoke), with each refusal edge at its natural point in the chain (second keygen refused, foreign-root publish refused, double promotion refused); `TestAuthoringRefusals` covers empty passage, criterion+judgment both, unknown source field, invalid posture. Mutants (all three run 2026-08-12, each red for its own reason): drop the `SourcePins` append ⟹ pin assertion; make promote re-attest the pre-flip bytes ⟹ "promotion did not change the content address"; delete the keygen overwrite refusal ⟹ second-keygen assertion. |
 
@@ -1470,7 +1593,8 @@ ACHIEVED for one intent or one idempotency key, or an ACHIEVED /
 SHADOW_RECORDED record missing `idempotency_key` or `intent_spec_hash` — the
 two fields the gate structurally guarantees nonempty on a grant.
 `rule_artifact_hash` is an opaque artifact-plane passthrough a deployment may
-legitimately omit: its absence is never a finding (ruled after probe 9's
+legitimately omit: its absence is never a finding (ruled after the
+verifier recompute probe's
 first live run refuted a correct feed on it; the good fixture pins the
 ruling with a grant that carries none). Overall verdict: `REFUTED` if anything refuted, else
 `UNVERIFIABLE` if anything unverifiable, else `VERIFIED`; the CLI exits 0
