@@ -70,7 +70,13 @@ Accepted; 0009/0010 reserved, not yet written).
   path an ambiguous `anyOf`/`oneOf` union is keyed as spelled — a standing
   fail-open (`CONTRACT.md` §2.7).
 - **Datadog + R4 OTel exporter: DEFERRED (ruling 7, 2026-08-20), kept
-  supply-side** — near-term Datadog story stays log-forward the feed (no
-  SDK change); exporter stays external per R4; no build until a new ruling.
-- **Content channel: split** — supply-side article + demand-side artifact.
+  platform-side (the declarant's side)** — near-term Datadog story stays
+  log-forward the feed (no SDK change); exporter stays external per R4; no
+  build until a new ruling.
+- **Content channel: split** — platform-side article + audit-side artifact.
+  (Naming ruling 2026-08-21: the two sides are **platform / audit** on the
+  product surface and **declarant / verifier** in documentation; the
+  former "supply / demand" pair is retired from living docs — dated records
+  keep it. First audit-side artifact target: regulatory reporting, per the
+  2026-08-21 plan.)
 - **Release signing: deferred** ("not for now") — checksums stay the floor.
