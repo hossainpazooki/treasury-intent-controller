@@ -626,7 +626,7 @@ table with the same fail-closed `Unknown`, and the same 500-edge call
 order (feed consult BEFORE deciding; unreachable feed ⟹ `Indeterminate`).
 The twin's lane: `python -m pytest declarant/pydeclarant`. Like the
 verifier's twin, it imports nothing from this module outside its own tree
-(§7.1). Its live leg is quickstart probe 7.
+(§7.1). Its live leg is a dedicated probe in `treasury/quickstart.sh`.
 
 **Framework adapter (`langchain_adapter.py`, born SDK-side 2026-08-18).**
 `gate_tool` wraps any LangChain tool so invocation becomes declare → await
@@ -648,7 +648,7 @@ schema-validated kwargs); non-keyword (string) input is refused before any
 declaration. Optional: hosts without `langchain_core` skip its tests
 visibly and lose nothing else; this monorepo's venv carries it since
 2026-08-18, so the full adapter lane runs here, and the adapter's LIVE leg
-is quickstart probe 8 (a gated tool executes once on a live `Proceed`; the
+is a dedicated probe in `treasury/quickstart.sh` (a gated tool executes once on a live `Proceed`; the
 same-args call raises `ALREADY_RESERVED` with the tool body not re-fired).
 
 **MCP gate (`mcp_adapter.py`, born SDK-side 2026-08-20).** `IntentGateMiddleware`
@@ -745,6 +745,136 @@ default (the default, `tools=None`, gates every tool). A bare STRING is refused 
 framework adapter, the MCP gate is optional: hosts without `fastmcp`
 skip its tests visibly and lose nothing else. Its live legs are
 quickstart probes 9 (the middleware) and 10 (the gated proxy).
+
+**Regulatory-reporting adapter (born SDK-side 2026-08-21).** `declarant/pydeclarant/reporting_adapter.py`
+gates an agent's regulatory-report SUBMISSIONS. It is stdlib-only (no third
+dependency exception) and reuses the framework-adapter refusal core
+(`gating.py`): execution — the caller's `submit()` — happens ONLY on a fresh
+synchronous `Proceed`; every other outcome raises `IntentRefused` with the
+submit callable never invoked. The plane stays PAYLOAD-BLIND: the adapter
+keys a report's regulatory IDENTITY, never its content, because the
+duplicate class it exists to refuse is "the same logical report submitted
+again with different bytes" (a second valuation for one UTI and date). A
+`ReportIdentity` carries `reporting_entity`, `uti`, `action_type`,
+`rule_set`, `on_behalf_of` (always keyed; `""` when self-reporting) and the
+discriminators `as_of`, `event_ref`, `prior_ref`. The action-type table is
+a CLOSED SET and fixes which discriminator each type keys on:
+
+| `action_type` | Keys on (beyond the five base fields) | Meaning (EMIR-Refit-shaped; VERIFY against the current ESMA validation rules before any production claim) |
+|---|---|---|
+| `NEWT` | — | new trade: one per UTI |
+| `MODI` | `event_ref` | modification, by the firm's stable lifecycle-event id |
+| `CORR` | `event_ref`, `prior_ref` | correction of a prior submission |
+| `EROR` | `prior_ref` | erasure of a prior submission |
+| `REVI` | `event_ref` | revival |
+| `TERM` | `event_ref` | early termination |
+| `VALU`, `COLU`, `POSC`, `MARU` | `as_of` (ISO date) | daily valuation / collateral / position / margin updates: one per UTI per day |
+
+Canonical bytes are sorted-key compact JSON over EXACTLY the keyed fields;
+the key is `derive_key(scope, run_id, "report-submit", canonical)`, and every
+call declares under its OWN FRESH intent — episode seed = that key plus a
+per-invocation nonce, never the bare key — so two submissions of one identity
+share the key and never a seed (the framework-adapter rule, unchanged here). A
+discriminator the action type does not key on that is NON-EMPTY is REFUSED
+(`ReportUnkeyable`) before any declaration — dropping it silently would let
+two spellings of one report fork, and keying it would let one report key
+twice. Identity string fields are keyed VERBATIM: the module does not
+normalize them on the caller's behalf, so a value must arrive already in
+the form that belongs in the key. A field with leading or trailing
+whitespace, or not in Unicode NFC form, is refused (`ReportUnkeyable`)
+before any declaration, because either would derive a different key from a
+spelling a real system treats as the same identifier -- a fork, and a fork
+is fail-OPEN. An unknown action type, an empty base field, a missing required
+discriminator, or a non-ISO `as_of` is likewise refused before declaring.
+`rule_set` is keyed ON PURPOSE: a re-report under a new validation rule set
+is a new action (the Refit go-live precedent), never a duplicate.
+`intent_spec_hash` may be a per-action-type MAPPING, so an erasure declares
+under a spec whose `human_judgment` list is non-empty and the GATE refuses
+it `unevaluable:human-judgment:<name>` (§3.3) — approval is the plane's
+attestation mechanism, not adapter code. `gate_batch` runs records
+INDEPENDENTLY and promises NO batch atomicity (a file with per-record
+ACK/NACK is neither ACHIEVED nor REFUSED as a whole; a batch terminal would
+be an amendment here first). `reconcile(achieved_records, submissions)`
+recomputes every logged submission's key and reports the bijection against
+ACHIEVED records: a key with two log entries is the defect class this
+adapter prevents; a key with two ACHIEVED records is the gate's invariant
+broken and belongs to the verifier. Recorded limits: one reporting entity
+per declaration (no multi-party terminal); no Go twin (adapters are
+Python-only by precedent); the content of what was submitted is evidenced
+by the firm's log, bound to the feed by key, never by the plane.
+
+**RECORDED RESIDUAL -- letter case is NOT normalized, and that is an
+operator ruling, not an oversight.** Two spellings of one identifier that
+differ only in case (an LEI or a UTI in upper vs. lower case, for example)
+derive two DIFFERENT keys today, and both can execute: this is a real fork
+the whitespace/NFC refusals above do not close. It is left open on purpose.
+Case-folding in this module would merge two identifiers a scheme might
+legitimately treat as distinct, and a merge here is fail-CLOSED in the
+worst possible way -- reservations never expire, so a false-match merge
+bricks a legitimate report forever, with no retry that can ever get through
+again. Whether case is significant for a given identity scheme is a
+domain-policy question the operator must rule on; it is not this library's
+call to make. Until that ruling lands, the caller MUST normalize case
+upstream, before constructing a `ReportIdentity`.
+
+**CDM bridge (`cdm_adapter.py`, born SDK-side 2026-08-21, dict-shaped).**
+`declarant/pydeclarant/cdm_adapter.py` maps between the FINOS Common Domain
+Model's `WorkflowStep` (CDM 7.1.0 JSON shape) and the reporting adapter's
+`ReportIdentity`, in BOTH directions, as plain dicts: it imports no CDM
+package. `identity_from_workflow_step` reads the UTI from
+`businessEvent.after[].trade.tradeIdentifier[]` (or the `proposedEvent`
+path) where `identifierType == "UniqueTransactionIdentifier"`, the
+`event_ref` from `eventIdentifier[0].assignedIdentifier[0].identifier`, the
+`prior_ref` from `previousWorkflowStep`'s event identifier, and the action
+type from `action` by a DEFAULT mapping (`New` to `NEWT`, `Correct` to
+`CORR`, `Cancel` to `EROR`) that the caller overrides with an explicit
+`action_type`, because CDM's `ActionEnum` is a message-level action and the
+regulatory action types are not the same vocabulary. A step with no UTI, an
+ambiguous one (two different UTIs), no `eventIdentifier`, an unknown CDM
+action with no explicit override, an explicit `action_type` override that is
+not in the closed table, or a step missing the discriminator its resolved
+action type keys on -- a `Correct` or `Cancel` step with no
+`previousWorkflowStep`, or a daily type (`VALU`/`COLU`/`POSC`/`MARU`) whose
+event carries no `eventDate` -- is `ReportUnkeyable` -- refused, never
+guessed. The bridge refuses a step it cannot key rather than build an
+identity the reporting adapter would only refuse later; its message names
+the missing CDM field (`previousWorkflowStep`, `eventDate`), never the
+reporting adapter's field name (`prior_ref`, `as_of`). `workflow_step_for`
+itself refuses (`ReportUnkeyable`) an `identity.action_type` outside the CDM
+action mapping rather than raising a bare `KeyError`. `workflow_step_for`
+emits the plane's outcome as a CDM-shaped
+`WorkflowStep`: `proposedEvent` carries the declaration, `businessEvent` is
+present ONLY for `ACHIEVED`, `rejected` is true for every refusal with the
+class and reason in `messageInformation`, and the idempotency KEY is the
+step's `eventIdentifier` so a CDM consumer can recompute the plane's record
+by key. `gate_cdm_event` (born SDK-side 2026-08-21) closes the loop --
+CDM step in, gated submission, CDM step out: it reads the identity, gates
+the caller's `submit()` exactly as `gate_submission` does, and returns the
+outcome as a `WorkflowStep`. Gate refusals are RETURNED as steps, never
+raised -- the refusal step IS the record a CDM consumer stores, carrying the
+SAME `eventIdentifier` (the key) an ACHIEVED step for that identity would,
+so a consumer can correlate the two. Pre-declaration refusals still raise
+`ReportUnkeyable`, because there is no record to emit when nothing was ever
+declared -- this includes an optional caller-supplied `qualifier(step) ->
+event name | None`: a CDM desk passes its own `Qualify_*` dispatch, and when
+the step's declared `intent` does not equal what the instruction QUALIFIES
+as (or the instruction qualifies as nothing), the agent said one thing and
+proposed another and nothing is declared. The qualifier hook is compared
+only as a string, keeping this module free of any CDM dependency.
+
+The `finos-cdm` package is a TEST-TIME ORACLE ONLY, and as of 2026-08-21 it
+cannot serve even that role: `test_cdm_adapter.py` validates the emitted
+shape with `WorkflowStep.model_validate` and SKIPS VISIBLY, because 7.1.0
+cannot construct a `WorkflowStep` carrying a populated `eventIdentifier` --
+`model_validate` refuses it ("Input should be None") since the lazily
+bundled `Identifier` type resolves to `None`. That was measured on BOTH
+Linux (Python 3.12.3) and Windows (Python 3.14.2) with byte-identical
+exception text, so it is a property of the distribution, not a platform
+artifact, and the oracle lane stays skipped until an upstream release fixes
+it. A skipped oracle is never a green one: until then the bridge's emitted
+shape is asserted only against this section, never against CDM's own types.
+Recorded limit: CDM's `proposedEvent`/`businessEvent` are being consolidated
+upstream; the mapping is one function per direction so a re-map is one edit.
 
 ---
 
@@ -1153,9 +1283,10 @@ non-vacuous by mutating a COPY of the tree and watching it go red.
 | 11 | Stable-once / volatile-twice crosses the wire: a counting `httptest` scorer sees exactly one `declaration` call per criterion and exactly one extra `dispatch` call per volatile criterion. | `TestStableOnceVolatileTwiceAcrossWire`. Mutant: drop the phase guard. |
 | 12 | Live outage refuses, never grants. | Two-process probe: gate `ACHIEVED` with the service up and facts passing; kill the service; the same intent (fresh key) ⟹ `FAILED`, `unevaluable:<criterion>`, no ACHIEVED record in the feed. The kill is real (`taskkill` / `kill`), not mocked. |
 | 13 | Refusal-hash commitment: the terminal-position record of EVERY completed authorization carries `trajectory_hash`, it recomputes from the per-intent records, and no non-terminal record carries one. | `go test ./core/internal/gate -run TerminalHash` — drive one intent per terminal class (ACHIEVED, SHADOW_RECORDED, criteria-FAILED, volatile-recheck, idempotency-collision, and a step-1 refusal) and assert the hash placement + recompute. Mutant: stamp the hash one event early. |
-| 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus quickstart probe 14 (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
+| 14 | Verifier twins agree and are non-vacuous: Go and Python produce byte-identical reports on the frozen feed fixtures, `VERIFIED` on the good fixture, `REFUTED` on the tampered one. | §9 feed-fixture tests green in BOTH lanes against the SAME bytes, plus the verifier recompute probe in `treasury/quickstart.sh` (both twins over the live feed, byte-compared). Mutant: the tampered fixture IS the standing mutant — one flipped detail byte must refute. |
 | 15 | Declarant discipline (§2.7): the SDK marshals exactly the declarant-owned §2.2 fields (golden request bytes), `force_scores` exists in no declarant type, terminal classification is total with a fail-closed `Unknown`, and the 500 edge consults the per-intent feed before deciding. | `go test ./declarant -count=1` — golden-bytes marshal test; classification table test covering every §3.2/§3.3 cause class AND an out-of-vocabulary reason; an `httptest` 500-edge test proving the feed consult precedes the decision. Mutant: drop the `Unknown` fallback (default to retry) → classification test red. Python twin (2026-08-18): `python -m pytest declarant/pydeclarant` — the SAME golden bytes byte-compared, the same classification totality incl. out-of-vocabulary, and an in-process-HTTP 500-edge call-order proof. Live: quickstart probe 6 (Go SDK: declare ⟹ `PROCEED`; re-declare same key ⟹ `ALREADY_RESERVED`) and probe 7 (the Python twin's `Client`, same two-step under its own derived key). |
 | 16 | Maker-checker chassis, end to end (2026-08-12): authoring routes every provision (criterion / human-judgment / named unknown), pins each to the sha256 of its EXACT passage and defaults a new draft to shadow; the attested bytes ARE the executed bytes (envelope payload byte-identical to the draft file, its hash is the content address, store resolution returns the same payload with the human-judgment entry intact — attestation launders nothing); promotion is a NEW authority act (new hash, only `enforcement_posture` differs, the shadow artifact's stored bytes untouched, §2.6); revocation kills exactly the revoked artifact, and the promoted sibling still resolves. | `go test ./treasury -count=1` — `TestMakerCheckerFlow` execs the REAL seat binaries built by `TestMain` (author → keygen → root → attest → publish → promote → revoke), with each refusal edge at its natural point in the chain (second keygen refused, foreign-root publish refused, double promotion refused); `TestAuthoringRefusals` covers empty passage, criterion+judgment both, unknown source field, invalid posture. Mutants (all three run 2026-08-12, each red for its own reason): drop the `SourcePins` append ⟹ pin assertion; make promote re-attest the pre-flip bytes ⟹ "promotion did not change the content address"; delete the keygen overwrite refusal ⟹ second-keygen assertion. |
+| 17 | Reporting adapter fail-closed and content-blind (§2.7): `gate_submission` invokes the caller's `submit()` ONLY on a fresh synchronous `Proceed`; every other outcome, the out-of-vocabulary `Unknown` included, raises `IntentRefused` with `submit` never called; the key is a function of the report's regulatory IDENTITY alone — two submissions with the same identity and DIFFERENT content derive ONE key and the second is refused `ALREADY_RESERVED` against a key-aware gate, while two identities differing only in `rule_set`, `as_of`, `event_ref`, or `prior_ref` derive different keys; a non-keyed discriminator that is non-empty, an unknown action type, or an empty base field is refused BEFORE any declaration POST; an erasure declares under the action type's own spec hash; `reconcile` recomputes keys from a submission log and reports exactly the bijection defects. | `python -m pytest declarant/pydeclarant` — the refusal matrix incl. an out-of-vocabulary terminal; a same-identity/different-content pair against the KEY-AWARE double (`_Script(key_aware=True)`) asserting one key, `ALREADY_RESERVED`, and a submit count of exactly 1; mirrored negative controls for each keyed discriminator; a strictness battery asserting zero POSTs for each pre-declaration refusal; a spec-mapping pin asserting the POSTed `intent_spec_hash` for `EROR`; a batch test with an unkeyable middle record (two POSTs, three outcomes, order preserved); reconcile fixtures for each defect class. Mutants: execute `submit()` on `Indeterminate` ⇒ the refusal matrix goes red; include the non-keyed discriminator in the canonical payload instead of refusing ⇒ the strictness battery goes red; drop `rule_set` from the payload ⇒ the negative control goes red. Live: the reporting-gate probe in `treasury/quickstart.sh` (2026-08-21 — a valuation submitted ONCE on a live `Proceed`, repository counter 1; the same identity with DIFFERENT report bytes was refused `ALREADY_RESERVED`, counter still 1; an erasure under the human-judgment spec was refused by the GATE, `class=HUMAN_JUDGMENT`, counter unchanged at 0; an unkeyable `NEWT` declared nothing — the recompute probe's intent count landing on 21 rather than 22 is the independent evidence of that last one), the same live ladder that already proves the framework-adapter and MCP-gate paragraphs above (§2.7). |
 
 ---
 
