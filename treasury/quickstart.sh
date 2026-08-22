@@ -106,6 +106,7 @@ hash01=$(attest_publish 01-within-limits.spec.json)
 hash02=$(attest_publish 02-near-duplicate.spec.json)
 hash03=$(attest_publish 03-over-threshold.spec.json)
 hash05=$(attest_publish 05-thin.spec.json)
+hash08=$(attest_publish 08-erasure-human-judgment.spec.json)
 
 echo "[boot] starting the gate (trust root + spec store wired)"
 INTENT_SCORER_URL="http://127.0.0.1:$scorer_port/ml/evaluate" INTENT_DATA_DIR="$data_dir" \
@@ -235,16 +236,38 @@ else
 fi
 echo "       why it matters: a server you do not own is gated without changing it - the backend never sees a call the gate refused, and an unkeyable call is refused BEFORE anything is declared"
 
+# Probe 11 (the reporting-gate probe, CONTRACT.md 2.7 "Regulatory-reporting
+# adapter"): a valuation submits ONCE on a live Proceed; the same identity
+# with different bytes is refused ALREADY_RESERVED (content-blind keying);
+# an erasure under the human-judgment spec is refused by the GATE; an
+# unkeyable NEWT declares nothing. The counter is the observable. Runs
+# BEFORE the scorer is killed below: its spec's "balance" criterion is
+# scored at declaration, so this leg needs a live scorer to reach Proceed.
+p11_rc=0; p11=$("$venv_py" "$here/probes/reporting_gate_live.py" "$gate_url" "$hash02" "$hash08") || p11_rc=$?
+case "$p11" in
+    *"reporting call 1: submitted=1 result=ack-1"*"reporting call 2: refused class=ALREADY_RESERVED submitted=1"*"reporting erasure: refused class=HUMAN_JUDGMENT reason=unevaluable:human-judgment:erasure-approval submitted=0"*"reporting unkeyable: refused before declaring submitted=0"*) p11_ok=1;;
+    *) p11_ok=0;;
+esac
+if [ "$p11_rc" -eq 0 ] && [ "$p11_ok" = 1 ]; then
+    pass=$((pass + 1)); echo "[PASS] reporting gate (live): $(printf '%s' "$p11" | tr '\n' ';')"
+else
+    fail=$((fail + 1)); echo "[FAIL] reporting gate (live): rc=$p11_rc out=$(printf '%s' "$p11" | tr '\n' ';')"
+fi
+echo "       why it matters: the second valuation for one UTI and date is the duplicate a trade repository will NOT reject - refused here by identity, not content; the erasure is refused by the gate's own abstention, not by adapter code"
+
 echo "[chaos] killing the scorer to prove fail-closed on outage"
 kill "$scorer_pid"; sleep 1
+# Probe 12
 probe "declare during scorer outage" 04-outage.json "$hash02" FAILED unevaluable "an unreachable scorer denies - unevaluable NEVER collapses into a pass"
+# Probe 13
 probe "attested-but-thin spec" 05-empty-criteria.json "$hash05" FAILED unevaluable:empty-criteria "thin-spec defense - attestation does not launder vacuity; zero criteria still refuse"
 
+# Probe 14: the feed-count probe.
 achieved=$(curl -fsS "$gate_url/v2/events?since=0" | "$venv_py" -c "import json,sys; e=json.load(sys.stdin)['events']; print(sum(1 for r in e if r['type']=='ACHIEVED'))")
-if [ "$achieved" = "6" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 6 ACHIEVED records - one per authorized key, never a duplicate"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 6 ACHIEVED, got $achieved"; fi
+if [ "$achieved" = "7" ]; then pass=$((pass + 1)); echo "[PASS] durable feed: exactly 7 ACHIEVED records - one per authorized key, never a duplicate"; else fail=$((fail + 1)); echo "[FAIL] durable feed: expected exactly 7 ACHIEVED, got $achieved"; fi
 echo "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-# Probe 14: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
+# Probe 15: the recompute probe (CONTRACT.md 9.1). Both verifier twins re-derive
 # every commitment - trajectory hashes on grants AND refusals, sequence
 # contiguity, exactly-one-ACHIEVED - from the record bytes alone, and their
 # reports must be byte-identical. `set -e` is suspended around the calls: a
@@ -252,13 +275,17 @@ echo "       why it matters: consumers settle only from this observable feed - e
 go_rc=0; go_report=$("$repo/bin/intent-verify" "$data_dir/events.jsonl") || go_rc=$?
 py_rc=0; py_report=$("$venv_py" "$repo/verifier/pyverifier/verify.py" "$data_dir/events.jsonl") || py_rc=$?
 verdict=$(printf '%s\n' "$go_report" | tail -1)
-if [ "$go_rc" -eq 0 ] && [ "$py_rc" -eq 0 ] && [ "$go_report" = "$py_report" ]; then
-    pass=$((pass + 1)); echo "[PASS] verifier recompute: $verdict (Go and Python reports identical)"
+# The intent COUNT is load-bearing, not decoration: it lands on 21 rather than
+# 22 precisely because the reporting probe's unkeyable NEWT is refused BEFORE
+# it declares. Asserting it here makes that mechanical, instead of a fact
+# somebody once read in a transcript. A new declaring probe must bump it.
+if [ "$go_rc" -eq 0 ] && [ "$py_rc" -eq 0 ] && [ "$go_report" = "$py_report" ] &&    [ "${verdict#*intents=21 }" != "$verdict" ]; then
+    pass=$((pass + 1)); echo "[PASS] verifier recompute: $verdict (Go and Python reports identical; intents=21 - the unkeyable report declared nothing)"
 else
-    fail=$((fail + 1)); echo "[FAIL] verifier recompute: goExit=$go_rc pyExit=$py_rc"
+    fail=$((fail + 1)); echo "[FAIL] verifier recompute: goExit=$go_rc pyExit=$py_rc verdict=$verdict (expected intents=21)"
     printf '%s\n' "$go_report" | tail -3
 fi
 echo "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-echo "RESULT: $pass/14 probes passed"
+echo "RESULT: $pass/15 probes passed"
 [ "$fail" -eq 0 ]

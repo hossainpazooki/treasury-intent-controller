@@ -29,12 +29,13 @@ Run from the repo root:
 Requirements: Go and Python 3.11+. The script creates the scorer venv on
 first run, boots the scorer with `facts.json` (`balance: 250.0`,
 `fx_rate: 1.30`) injected via `SCORER_FACTS_JSON`, then runs the plane leg —
-keygen (test key authority), trust root, attest + publish the four spec
+keygen (test key authority), trust root, attest + publish the five spec
 drafts in `specs/` — builds and boots the gate with `INTENT_SCORER_URL` and
 `INTENT_TRUST_ROOT`, runs the probe ladder (including a live signed
 revocation, the declarant-SDK consumption probe, the LangChain and MCP
-live legs, and the verifier-twin recompute), and tears everything down.
-Expected final line: `RESULT: 14/14 probes passed` — every probe asserts its terminal, so the
+live legs, the reporting-gate probe, and the verifier-twin recompute), and
+tears everything down.
+Expected final line: `RESULT: 15/15 probes passed` — every probe asserts its terminal, so the
 demo doubles as a smoke gate.
 
 ## The probe ladder
@@ -51,10 +52,11 @@ demo doubles as a smoke gate.
 | 8 | Invoke a LangChain tool wrapped by `gate_tool` (the adapter), then repeat with the SAME args | first: tool body executes exactly once, result returned; second: `IntentRefused` `class=ALREADY_RESERVED`, body NOT re-fired | the adapter's LIVE leg (2026-08-18): a wrapped agent tool fires its consequence exactly once, and a refusal is a classified outcome, not an exception to debug. Its first live run failed the ladder at the verifier-recompute probe — the verifier refuted a reused episode seed the lab double could not see (`docs/learnings/2026-08-18-live-verifier-refutes-adapter-seed-reuse.md`) |
 | 9 | Call a gated `fastmcp` tool through `IntentGateMiddleware`, repeat with the SAME args, then retry those args against a SECOND, independent middleware instance (same scope/run, its own server and counter) | first: tool body executes exactly once, result returned; second: `ToolError` carrying `class=ALREADY_RESERVED`, body NOT re-fired; third: `ALREADY_RESERVED` again with the second instance's counter still 0 | the MCP gate's LIVE leg (2026-08-20), and the stateless/multi-replica claim proven live: the idempotency key is DERIVED, not remembered, so a retry landing on a replica that shares no state is refused just the same (§2.7) |
 | 10 | Front an UNGATED backend with `gated_proxy` under its own `run_id` and call it twice with the SAME args (plus a call omitting a property whose schema declares no default) | first: passes through, INNER counter 1; second: `ToolError` `class=ALREADY_RESERVED`, INNER counter still 1; the omitted-property call is refused BEFORE anything is declared (`strict_args`) | a server you do not own is gated without changing it — the INNER counter is what proves the refused call never reached the backend at all, and an unkeyable call earns no `ACHIEVED` (§2.7) |
-| 11 | Kill the scorer, declare again | `FAILED` `unevaluable:` | fail-closed on outage, demonstrated live |
-| 12 | Declare an attested-but-thin spec (zero criteria) | `FAILED` `unevaluable:empty-criteria` | attestation does not launder vacuity |
-| 13 | Read `GET /v2/events?since=0` | exactly six `ACHIEVED` — one per authorized key | emit-and-observe: consumers settle only from the feed, and no key ever settles twice |
-| 14 | Run BOTH verifier twins (`bin/intent-verify` + `verifier/pyverifier/verify.py`) over the live `events.jsonl` | `RESULT: VERIFIED`, exit 0, reports byte-identical | an independent examiner re-derives every commitment — trajectory hashes on grants AND refusals, sequence contiguity, exactly-one-ACHIEVED — from the record bytes alone, with no trust in the gate |
+| 11 | Submit a valuation (VALU) through the stdlib reporting adapter (`gate_submission`), repeat with the SAME identity but DIFFERENT report bytes, declare an erasure (EROR) under a spec carrying an unresolved human-judgment entry, then declare an unkeyable NEWT (an `as_of` on a type that does not key on it) — runs while the scorer is still live, since its `balance` criterion is scored at declaration | first: submits once, repository counter 1; second: refused `ALREADY_RESERVED`, counter still 1; third: refused by the GATE `class=HUMAN_JUDGMENT`, counter unchanged; fourth: `ReportUnkeyable` BEFORE any declaration | content-blind keying proven live — the second valuation is the duplicate a trade repository will NOT reject, refused by identity, not content; the erasure is refused by the plane's own abstention, not by adapter code (§2.7) |
+| 12 | Kill the scorer, declare again | `FAILED` `unevaluable:` | fail-closed on outage, demonstrated live |
+| 13 | Declare an attested-but-thin spec (zero criteria) | `FAILED` `unevaluable:empty-criteria` | attestation does not launder vacuity |
+| 14 | Read `GET /v2/events?since=0` | exactly seven `ACHIEVED` — one per authorized key | emit-and-observe: consumers settle only from the feed, and no key ever settles twice |
+| 15 | Run BOTH verifier twins (`bin/intent-verify` + `verifier/pyverifier/verify.py`) over the live `events.jsonl` | `RESULT: VERIFIED`, exit 0, reports byte-identical | an independent examiner re-derives every commitment — trajectory hashes on grants AND refusals, sequence contiguity, exactly-one-ACHIEVED — from the record bytes alone, with no trust in the gate |
 
 `force_scores` (the guarded test affordance) is deliberately absent from this
 showcase — the gate here boots WITHOUT `INTENT_UNSAFE_FORCE_SCORES`, so the

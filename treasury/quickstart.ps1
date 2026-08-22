@@ -90,6 +90,7 @@ try {
     $hash02 = AttestPublish "02-near-duplicate.spec.json"
     $hash03 = AttestPublish "03-over-threshold.spec.json"
     $hash05 = AttestPublish "05-thin.spec.json"
+    $hash08 = AttestPublish "08-erasure-human-judgment.spec.json"
 
     $env:INTENT_SCORER_URL = $scorerUrl
     $env:INTENT_DATA_DIR = $dataDir
@@ -202,19 +203,37 @@ try {
     else { $fail++; Write-Host "[FAIL] gated MCP proxy (live): rc=$p10Rc out=$p10line" }
     Write-Host "       why it matters: a server you do not own is gated without changing it - the backend never sees a call the gate refused, and an unkeyable call is refused BEFORE anything is declared"
 
+    # Probe 11 (the reporting-gate probe, CONTRACT.md 2.7 "Regulatory-reporting
+    # adapter"). Runs BEFORE the scorer is killed below: its spec's "balance"
+    # criterion is scored at declaration, so this leg needs a live scorer to
+    # reach Proceed.
+    $p11 = (& $venvPy (Join-Path $PSScriptRoot "probes\reporting_gate_live.py") $gateUrl $hash02 $hash08 | Out-String).Trim()
+    $p11Rc = $LASTEXITCODE
+    $ok = ($p11Rc -eq 0) -and ($p11 -like "*reporting call 1: submitted=1 result=ack-1*") -and
+          ($p11 -like "*reporting call 2: refused class=ALREADY_RESERVED submitted=1*") -and
+          ($p11 -like "*reporting erasure: refused class=HUMAN_JUDGMENT reason=unevaluable:human-judgment:erasure-approval submitted=0*") -and
+          ($p11 -like "*reporting unkeyable: refused before declaring submitted=0*")
+    $p11line = $p11 -replace "`r`n", "; " -replace "`n", "; "
+    if ($ok) { $pass++; Write-Host "[PASS] reporting gate (live): $p11line" }
+    else { $fail++; Write-Host "[FAIL] reporting gate (live): rc=$p11Rc out=$p11line" }
+    Write-Host "       why it matters: the second valuation for one UTI and date is the duplicate a trade repository will NOT reject - refused here by identity, not content; the erasure is refused by the gate's own abstention, not by adapter code"
+
     Write-Host "[chaos] killing the scorer to prove fail-closed on outage"
     Stop-Process -Id $scorer.Id -Force
     Start-Sleep -Milliseconds 500
+    # Probe 12
     Probe "declare during scorer outage" "04-outage.json" $hash02 "FAILED" "unevaluable" "an unreachable scorer denies - unevaluable NEVER collapses into a pass"
+    # Probe 13
     Probe "attested-but-thin spec" "05-empty-criteria.json" $hash05 "FAILED" "unevaluable:empty-criteria" "thin-spec defense - attestation does not launder vacuity; zero criteria still refuse"
 
+    # Probe 14: the feed-count probe.
     $events = Invoke-RestMethod -Uri "$gateUrl/v2/events?since=0"
     $achieved = @($events.events | Where-Object { $_.type -eq "ACHIEVED" })
-    if ($achieved.Count -eq 6) { $pass++; Write-Host "[PASS] durable feed: exactly 6 ACHIEVED records - one per authorized key - among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
-    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 6 ACHIEVED, got $($achieved.Count)" }
+    if ($achieved.Count -eq 7) { $pass++; Write-Host "[PASS] durable feed: exactly 7 ACHIEVED records - one per authorized key - among $($events.events.Count) events (cursor next_since=$($events.next_since))" }
+    else { $fail++; Write-Host "[FAIL] durable feed: expected exactly 7 ACHIEVED, got $($achieved.Count)" }
     Write-Host "       why it matters: consumers settle only from this observable feed - emit-and-observe"
 
-    # Probe 14: the recompute probe (CONTRACT.md 9.1). Both verifier twins
+    # Probe 15: the recompute probe (CONTRACT.md 9.1). Both verifier twins
     # re-derive every commitment - trajectory hashes on grants AND refusals,
     # sequence contiguity, exactly-one-ACHIEVED - from the record bytes alone,
     # and their reports must agree line-for-line. A refuting verifier exits
@@ -224,11 +243,15 @@ try {
     $pyReport = & $venvPy (Join-Path $repo "verifier\pyverifier\verify.py") (Join-Path $dataDir "events.jsonl") | Out-String
     $pyRc = $LASTEXITCODE
     $verdict = ($goReport.TrimEnd() -split "`n")[-1]
-    if ($goRc -eq 0 -and $pyRc -eq 0 -and ($goReport -eq $pyReport)) { $pass++; Write-Host "[PASS] verifier recompute: $verdict (Go and Python reports identical)" }
-    else { $fail++; Write-Host "[FAIL] verifier recompute: goExit=$goRc pyExit=$pyRc identical=$($goReport -eq $pyReport)"; Write-Host $goReport }
+    # The intent COUNT is load-bearing, not decoration: it lands on 21 rather
+    # than 22 precisely because the reporting probe's unkeyable NEWT is refused
+    # BEFORE it declares. Asserting it makes that mechanical instead of a fact
+    # somebody once read in a transcript. A new declaring probe must bump it.
+    if ($goRc -eq 0 -and $pyRc -eq 0 -and ($goReport -eq $pyReport) -and ($verdict -like "*intents=21 *")) { $pass++; Write-Host "[PASS] verifier recompute: $verdict (Go and Python reports identical)" }
+    else { $fail++; Write-Host "[FAIL] verifier recompute (expected intents=21): verdict=$verdict goExit=$goRc pyExit=$pyRc identical=$($goReport -eq $pyReport)"; Write-Host $goReport }
     Write-Host "       why it matters: an examiner re-derives every commitment from the record bytes alone - no trust in the gate"
 
-    Write-Host ("RESULT: {0}/14 probes passed" -f $pass)
+    Write-Host ("RESULT: {0}/15 probes passed" -f $pass)
 }
 finally {
     # Reclaim on EVERY exit path - a Wait-Healthy timeout or a transport throw

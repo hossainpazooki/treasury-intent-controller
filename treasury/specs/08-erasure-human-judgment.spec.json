@@ -1,0 +1,18 @@
+{
+  "spec_version": 1,
+  "action_class": "regulatory-report",
+  "enforcement_posture": "enforce",
+  "criteria": [
+    {
+      "name": "balance",
+      "threshold": 120,
+      "volatility": "stable"
+    }
+  ],
+  "human_judgment": [
+    {
+      "name": "erasure-approval",
+      "passage_sha256": "dc9ac389c67e9e091f0a45362ec4511c73b8d48041ce6e130414aae8acc67f8d"
+    }
+  ]
+}
